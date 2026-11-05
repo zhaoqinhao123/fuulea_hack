@@ -107,6 +107,7 @@
   }
   var minBtn = icon('−', '小窗');
   var closeBtn = icon('✕', '关闭');
+  closeBtn.onclick = function () { root.remove(); };
   head.append(cat, title, minBtn, closeBtn);
 
   var body = document.createElement('div');
