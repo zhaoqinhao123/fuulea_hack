@@ -5,6 +5,12 @@
 
   function clamp(v, a, b) { return Math.min(Math.max(v, a), b); }
 
+  function proxyBase() { try { return localStorage.getItem('fh:proxy') || ''; } catch (e) { return ''; } }
+  function viaProxy(url) {
+    var p = proxyBase();
+    return p ? p + encodeURIComponent(url) : url;
+  }
+
   function bar(node, hint) {
     var d = document.createElement('div');
     d.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(16,16,18,.97);overflow:hidden';
@@ -208,7 +214,7 @@
     var loading = spinner('正在下载…');
     var d = bar(loading, url.split('/').pop().slice(0, 40));
 
-    fetch(url, { credentials: 'omit' })
+    fetch(viaProxy(url), { credentials: 'omit' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
       .then(function (blob) {
         d.remove();
@@ -251,7 +257,18 @@
     open2.style.cssText = 'min-width:160px;height:48px;border:1px solid #3a3a42;border-radius:12px;background:transparent;color:#999;font:15px/1 inherit;cursor:pointer';
     open2.onclick = function () { if (pin) window.open(PAGE_OF(pin), '_blank'); };
 
-    box.append(tip, input, go, open2);
+    var px = document.createElement('button');
+    px.textContent = '⚙ 代理' + (proxyBase() ? '（已设置）' : '');
+    px.style.cssText = 'height:34px;border:0;background:transparent;color:#666;font:12px/1 inherit;cursor:pointer';
+    px.onclick = function () {
+      var v = prompt('代理地址（留空 = 取消）\n格式：http://IP:8787/?url=', proxyBase());
+      if (v === null) return;
+      v = v.trim();
+      try { v ? localStorage.setItem('fh:proxy', v) : localStorage.removeItem('fh:proxy'); } catch (e) {}
+      alert(v ? '已保存，重新输入 PIN 即可全自动' : '已取消代理');
+    };
+
+    box.append(tip, input, go, open2, px);
     bar(box, '手动模式');
   }
 
@@ -264,7 +281,7 @@
   if (!v) { manual('', '手动模式：粘贴下载链接'); return; }
   if (/^https?:\/\//i.test(v)) { openFile(v); return; }
 
-  fetch(PAGE_OF(v), { credentials: 'omit' })
+  fetch(viaProxy(PAGE_OF(v)), { credentials: 'omit' })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(function (html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');
