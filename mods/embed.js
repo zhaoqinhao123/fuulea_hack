@@ -199,6 +199,25 @@
     });
     bar.addEventListener('pointerup', function () { on = false; });
 
+    // 右下角缩放把手（触摸/鼠标都可用）
+    var grip = document.createElement('div');
+    grip.style.cssText = 'position:absolute;right:0;bottom:0;width:24px;height:24px;cursor:nwse-resize;touch-action:none;z-index:2;background:linear-gradient(135deg,transparent 46%,#5a5a66 46%,#5a5a66 56%,transparent 56%,transparent 68%,#5a5a66 68%,#5a5a66 78%,transparent 78%);border-bottom-right-radius:10px';
+    var rx = 0, ry = 0, rw = 0, rh = 0, ron = false;
+    grip.addEventListener('pointerdown', function (e) {
+      var r = win.getBoundingClientRect();
+      rx = e.clientX; ry = e.clientY; rw = r.width; rh = r.height; ron = true;
+      try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+      e.stopPropagation();
+    });
+    grip.addEventListener('pointermove', function (e) {
+      if (!ron || win.dataset.max === '1') return;
+      win.style.width = Math.max(280, rw + e.clientX - rx) + 'px';
+      win.style.height = Math.max(200, rh + e.clientY - ry) + 'px';
+    });
+    grip.addEventListener('pointerup', function () { ron = false; });
+    grip.addEventListener('pointercancel', function () { ron = false; });
+    win.append(grip);
+
     document.body.append(win);
     return win;
   }
