@@ -149,6 +149,7 @@
 
     var input = document.createElement('input');
     input.placeholder = '粘贴下载链接（s.100tifen.com/...）';
+    try { input.value = localStorage.getItem('fh:lasturl') || ''; } catch (e) {}
     input.style.cssText = 'width:min(520px,88vw);padding:14px;border-radius:12px;border:1px solid #3a3a42;background:#1b1b20;color:#eee;font:15px/1.4 inherit;outline:none';
 
     var go = document.createElement('button');
@@ -173,6 +174,7 @@
   }
 
   function openFile(url) {
+    try { localStorage.setItem('fh:lasturl', url); } catch (e) {}
     fetch(url, { credentials: 'omit' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
       .then(function (blob) {
@@ -189,11 +191,17 @@
       });
   }
 
-  var pin = prompt('PIN（留空 = 手动粘贴链接）', '');
-  if (pin === null) return;
-  pin = pin.trim();
+  var saved = '';
+  try { saved = localStorage.getItem('fh:lasturl') || ''; } catch (e) {}
 
-  if (!pin) { manual('', '手动模式：粘贴下载链接'); return; }
+  var input0 = prompt('PIN 或直链（留空 = 手动模式）', saved);
+  if (input0 === null) return;
+  input0 = input0.trim();
+
+  if (!input0) { manual('', '手动模式：粘贴下载链接'); return; }
+  if (/^https?:\/\//i.test(input0)) { openFile(input0); return; }
+
+  var pin = input0;
 
   fetch(PAGE_OF(pin), { credentials: 'omit' })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
