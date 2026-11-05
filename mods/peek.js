@@ -1,5 +1,34 @@
 /* 隐蔽遮罩：PIN / 直链 → 全屏查看（图片捏合缩放、HTML/PDF 滚动、DOCX 解析成网页） */
 (function () {
+  // fetch 在部分 WebView 会挂起：加超时 + XHR 兜底
+  function getText(url, ms) {
+    ms = ms || 8000;
+    return new Promise(function (resolve, reject) {
+      var ctrl = window.AbortController ? new AbortController() : null;
+      var timer = setTimeout(function () {
+        if (ctrl) { try { ctrl.abort(); } catch (e) {} }
+        xhr();
+      }, ms);
+      var settled = false;
+      function ok(t) { if (settled) return; settled = true; clearTimeout(timer); resolve(t); }
+      function fail(e) { if (settled) return; settled = true; clearTimeout(timer); reject(e); }
+      function xhr() {
+        try {
+          var x = new XMLHttpRequest();
+          x.open('GET', url, true);
+          x.timeout = ms;
+          x.onload = function () { (x.status >= 200 && x.status < 300) ? ok(x.responseText) : fail(new Error('XHR ' + x.status)); };
+          x.onerror = function () { fail(new Error('XHR error')); };
+          x.ontimeout = function () { fail(new Error('XHR timeout')); };
+          x.send();
+        } catch (e) { fail(e); }
+      }
+      fetch(url, ctrl ? { signal: ctrl.signal, credentials: 'omit' } : { credentials: 'omit' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(ok, function () { xhr(); });
+    });
+  }
+
   var PAGE_OF = function (pin) { return 'https://t.fuulea.com/?pin=' + encodeURIComponent(pin); };
   var LAST = 'fh:lasturl';
 
@@ -214,7 +243,7 @@
     var loading = spinner('正在下载…');
     var d = bar(loading, url.split('/').pop().slice(0, 40));
 
-    fetch(viaProxy(url), { credentials: 'omit' })
+    getText(viaProxy(url))
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
       .then(function (blob) {
         d.remove();
@@ -281,7 +310,7 @@
   if (!v) { manual('', '手动模式：粘贴下载链接'); return; }
   if (/^https?:\/\//i.test(v)) { openFile(v); return; }
 
-  fetch(viaProxy(PAGE_OF(v)), { credentials: 'omit' })
+  getText(viaProxy(PAGE_OF(v)))
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(function (html) {
       var doc = new DOMParser().parseFromString(html, 'text/html');

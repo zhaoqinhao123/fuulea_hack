@@ -3,7 +3,7 @@
   if (document.getElementById('__fh')) return;
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@main/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.4/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
