@@ -4,7 +4,7 @@
   // 所以这里必须幂等，否则第二次调用会把刚建好的面板删掉。
   if (document.getElementById('__fh')) return;
 
-  var BASE = 'https://gitlab.com/api/v4/projects/88543905/repository/files/';
+  var BASE = 'https://gitlab.com/api/v4/projects/88544686/repository/files/';
   var MODS = [
     ['💰 积分', 'mods/score.js'],
     ['🐾 灵宠', 'mods/pets.js'],
