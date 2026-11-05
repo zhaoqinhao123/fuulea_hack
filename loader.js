@@ -66,11 +66,23 @@
     b.onclick = function () {
       b.disabled = true;
       b.style.opacity = .5;
+      var key = 'fh:mod:' + m[1];
+      function done() { b.disabled = false; b.style.opacity = 1; }
+      function fromCache(why) {
+        var c = null;
+        try { c = localStorage.getItem(key); } catch (e) {}
+        if (c) { try { eval(c); return done(); } catch (e) {} }
+        alert('加载失败：' + why + '\n\nGitLab 匿名接口按 IP 限流（429），等几分钟再试。');
+        done();
+      }
       fetch(BASE + encodeURIComponent(m[1]) + '/raw?ref=main&t=' + Date.now())
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-        .then(eval)
-        .catch(function (e) { alert('加载失败：' + e.message); })
-        .then(function () { b.disabled = false; b.style.opacity = 1; });
+        .then(function (t) {
+          try { localStorage.setItem(key, t); } catch (e) {}
+          eval(t);
+          done();
+        })
+        .catch(function (e) { fromCache(e.message); });
     };
     grid.append(b);
   });
