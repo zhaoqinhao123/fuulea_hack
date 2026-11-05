@@ -39,16 +39,43 @@
   function view(blob, name) {
     var s = shell(name || '预览');
 
+    // 分享/保存（系统分享面板，安卓/iOS 可直接存相册）
+    var share = document.createElement('button');
+    share.textContent = '📤';
+    share.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:17px;cursor:pointer';
+    share.onclick = function () {
+      var fname = name || (blob.type.indexOf('video') === 0 ? 'record.mp4' : 'photo.png');
+      var file;
+      try { file = new File([blob], fname, { type: blob.type || 'application/octet-stream' }); }
+      catch (e) { file = null; }
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        navigator.share({ files: [file] }).catch(function () {});
+      } else {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = fname;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        alert('已发起下载：' + fname + '\n\n找不到的话：\n· 安卓：浏览器菜单 → 下载内容\n· 或者用系统分享面板保存');
+      }
+    };
+
     // 保存/下载按钮
     var save = document.createElement('button');
     save.textContent = '⤓';
     save.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:18px;cursor:pointer';
     save.onclick = function () {
+      var fname = name || 'file';
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = name || 'file';
+      a.download = fname;
+      document.body.append(a);
       a.click();
+      a.remove();
+      alert('已发起下载：' + fname + '\n\n安卓常见落点：浏览器「下载内容」\n（Android 11+ 可能落在 app 私有目录，文件管理器看不到）');
     };
+    s.bar.insertBefore(share, s.bar.lastChild);
     s.bar.insertBefore(save, s.bar.lastChild);
 
     if (/^video\//.test(blob.type) || /\.(mp4|mov|webm|m4v)$/i.test(name || '')) {
@@ -204,7 +231,7 @@
     open(facing);
   }
 
-  // ── 本地文件 ──
+  // ── 本地文件 / 系统相机 ──
   function local() {
     var input = document.createElement('input');
     input.type = 'file';
@@ -216,17 +243,34 @@
     input.click();
   }
 
+  // 走系统相机 App：拍照/录像由系统完成，文件直接进相册
+  function nativeCam(kind) {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = kind === 'video' ? 'video/*' : 'image/*';
+    input.setAttribute('capture', 'environment');
+    input.onchange = function () {
+      var f = input.files && input.files[0];
+      if (f) view(f, f.name);
+    };
+    input.click();
+  }
+
   // ── 入口 ──
   var s = shell('相机 / 本地媒体', '__md');
   var wrap = document.createElement('div');
-  wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px';
-  var a = btn('📷 打开相机', 'min-width:200px');
-  var b = btn('🖼 本地图片/视频', 'min-width:200px');
+  wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px';
+  var a = btn('📷 网页相机（实时预览）', 'min-width:220px');
+  var n1 = btn('📸 系统拍照', 'min-width:220px');
+  var n2 = btn('🎥 系统录像', 'min-width:220px');
+  var b = btn('🖼 本地图片/视频', 'min-width:220px');
   var tip = document.createElement('div');
-  tip.style.cssText = 'color:#666;font-size:12px;text-align:center;max-width:420px;line-height:1.7';
-  tip.textContent = '相机需要浏览器授予权限；file:// 或非 https 页面可能被拒绝，此时请用「本地」从相册选。';
+  tip.style.cssText = 'color:#666;font-size:12px;text-align:center;max-width:430px;line-height:1.8';
+  tip.innerHTML = '网页相机：实时预览，录制格式取决于浏览器（你这台只能 WebM）。<br>系统拍照/录像：调系统相机，文件直接进相册，格式是 MP4/JPG。';
   a.onclick = function () { s.root.remove(); camera(); };
+  n1.onclick = function () { nativeCam('photo'); };
+  n2.onclick = function () { nativeCam('video'); };
   b.onclick = function () { local(); };
-  wrap.append(a, b, tip);
+  wrap.append(a, n1, n2, b, tip);
   s.body.append(wrap);
 })();
