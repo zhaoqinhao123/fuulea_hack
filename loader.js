@@ -30,31 +30,53 @@
   ];
 
   // ── 加载模块（三级源 + 缓存） ──
+  var MOD_BASES = [
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@main/',
+    'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
+    'https://gitlab.com/api/v4/projects/88544686/repository/files/'
+  ];
+
   function loadMod(path, btn) {
-    var key = 'fh:mod:' + path;
     function done() { if (btn) { btn.disabled = false; btn.style.opacity = 1; } }
     function cached(why) {
       var c = null;
-      try { c = localStorage.getItem(key); } catch (e) {}
+      try { c = localStorage.getItem('fh:mod:' + path); } catch (e) {}
       if (c) { try { eval(c); return done(); } catch (e) {} }
-      alert('加载失败：' + why);
+      alert('加载失败：' + why + '\n\n可以试试清缓存后重试，或用指令板直接执行。');
       done();
     }
+
+    var urls = [
+      MOD_BASES[0] + path + '?t=' + Date.now(),
+      MOD_BASES[1] + path + '?t=' + Date.now(),
+      MOD_BASES[2] + encodeURIComponent(path) + '/raw?ref=main&t=' + Date.now()
+    ];
+
     var i = 0;
     (function next() {
-      if (i >= BASES.length) return cached('三个源都没通');
-      fetch(srcUrl(i++, path))
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-        .then(function (t) {
-          try { localStorage.setItem(key, t); } catch (e) {}
-          eval(t);
-          done();
-        })
-        .catch(next);
+      if (i >= urls.length) return cached('三个源都没通');
+      var url = urls[i++];
+      var s = document.createElement('script');
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        s.remove();
+        next();
+      }, 5000);
+      s.onload = function () {
+        if (settled) return;
+        settled = true; clearTimeout(timer); s.remove(); done();
+      };
+      s.onerror = function () {
+        if (settled) return;
+        settled = true; clearTimeout(timer); s.remove(); next();
+      };
+      s.src = url;
+      document.body.append(s);
     })();
   }
 
-  // ── 基础 UI ──
   var root = document.createElement('div');
   root.id = '__fh';
   root.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:2147483647;font:13px/1.45 -apple-system,"PingFang SC",sans-serif;color:#eee;user-select:none';
