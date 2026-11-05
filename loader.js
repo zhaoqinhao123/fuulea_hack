@@ -18,6 +18,7 @@
     ['🌐 网页', 'mods/embed.js'],
     ['📦 存档', 'mods/dump.js'],
     ['📂 文件', 'mods/browser.js'],
+    ['📷 相机', 'mods/media.js'],
     ['💣 清空', 'mods/reset.js']
   ];
 
