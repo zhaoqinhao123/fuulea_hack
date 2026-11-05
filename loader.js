@@ -1,7 +1,8 @@
 /* fuulea_hack loader — 浮动面板，按需加载 mods/ 下的单个功能脚本 */
 (function () {
-  var old = document.getElementById('__fh');
-  if (old) { old.remove(); return; }
+  // 页面里 showFeedback 会用 `innerHTML +=` 重排，onerror 会触发两次；
+  // 所以这里必须幂等，否则第二次调用会把刚建好的面板删掉。
+  if (document.getElementById('__fh')) return;
 
   var BASE = 'https://gitlab.com/api/v4/projects/88543905/repository/files/';
   var MODS = [
