@@ -4,7 +4,16 @@
   // 所以这里必须幂等，否则第二次调用会把刚建好的面板删掉。
   if (document.getElementById('__fh')) return;
 
-  var BASE = 'https://gitlab.com/api/v4/projects/88544686/repository/files/';
+  // 三个源依次尝试：GitHub raw（无限制）→ jsDelivr CDN → GitLab API（会限流）
+  var BASES = [
+    'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@main/',
+    'https://gitlab.com/api/v4/projects/88544686/repository/files/'
+  ];
+  function srcUrl(i, path) {
+    if (i === 2) return BASES[2] + encodeURIComponent(path) + '/raw?ref=main&t=' + Date.now();
+    return BASES[i] + path + '?t=' + Date.now();
+  }
   var MODS = [
     ['💰 积分', 'mods/score.js'],
     ['🐾 灵宠', 'mods/pets.js'],
@@ -72,17 +81,22 @@
         var c = null;
         try { c = localStorage.getItem(key); } catch (e) {}
         if (c) { try { eval(c); return done(); } catch (e) {} }
-        alert('加载失败：' + why + '\n\nGitLab 匿名接口按 IP 限流（429），等几分钟再试。');
+        alert('加载失败：' + why + '\n\n三个源都没通，等会儿再试。');
         done();
       }
-      fetch(BASE + encodeURIComponent(m[1]) + '/raw?ref=main&t=' + Date.now())
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-        .then(function (t) {
-          try { localStorage.setItem(key, t); } catch (e) {}
-          eval(t);
-          done();
-        })
-        .catch(function (e) { fromCache(e.message); });
+      var idx = 0;
+      function tryLoad() {
+        if (idx >= BASES.length) return fromCache('全部源失败');
+        fetch(srcUrl(idx++, m[1]))
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+          .then(function (t) {
+            try { localStorage.setItem(key, t); } catch (e) {}
+            eval(t);
+            done();
+          })
+          .catch(function () { tryLoad(); });
+      }
+      tryLoad();
     };
     grid.append(b);
   });
