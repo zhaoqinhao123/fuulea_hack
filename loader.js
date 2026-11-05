@@ -103,15 +103,7 @@
     body.append(b);
   });
 
-  var foot = document.createElement('div');
-  foot.style.cssText = 'padding:0 10px 10px';
-  var cmdBtn = document.createElement('button');
-  cmdBtn.textContent = '⌨ 指令板';
-  cmdBtn.style.cssText = 'width:100%;padding:9px;border:1px solid #3a3a42;border-radius:9px;background:#202026;color:#bbb;cursor:pointer;font:inherit';
-  cmdBtn.onclick = openCmd;
-  foot.append(cmdBtn);
-
-  panel.append(head, body, foot);
+  panel.append(head, body);
   root.append(panel);
   document.body.append(root);
 
@@ -145,7 +137,6 @@
   minBtn.onclick = function () {
     mini = !mini;
     body.style.display = mini ? 'none' : 'grid';
-    foot.style.display = mini ? 'none' : 'block';
     title.style.display = mini ? 'none' : 'block';
     minBtn.style.display = mini ? 'none' : 'block';
     panel.style.borderRadius = mini ? '50%' : '14px';
