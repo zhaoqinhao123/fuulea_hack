@@ -2,7 +2,7 @@
 (function () {
   if (document.getElementById('__md')) { document.getElementById('__md').remove(); }
 
-  function shell(title, id) {
+  function shell(title, id, onClose) {
     var d = document.createElement('div');
     if (id) d.id = id;
     d.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(10,10,12,.95);display:flex;flex-direction:column;font:13px/1.5 -apple-system,"PingFang SC",sans-serif;color:#ddd';
@@ -15,7 +15,10 @@
     var x = document.createElement('button');
     x.textContent = '✕';
     x.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:19px;cursor:pointer';
-    x.onclick = function () { d.remove(); };
+    x.onclick = function () {
+      try { if (onClose) onClose(); } catch (e) {}
+      d.remove();
+    };
     bar.append(t, x);
 
     var body = document.createElement('div');
@@ -35,13 +38,35 @@
   // ── 查看器：图片 / 视频 ──
   function view(blob, name) {
     var s = shell(name || '预览');
+
+    // 保存/下载按钮
+    var save = document.createElement('button');
+    save.textContent = '⤓';
+    save.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:18px;cursor:pointer';
+    save.onclick = function () {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name || 'file';
+      a.click();
+    };
+    s.bar.insertBefore(save, s.bar.lastChild);
+
     if (/^video\//.test(blob.type) || /\.(mp4|mov|webm|m4v)$/i.test(name || '')) {
       var v = document.createElement('video');
       v.src = URL.createObjectURL(blob);
       v.controls = true;
+      v.autoplay = true;
       v.playsInline = true;
       v.setAttribute('playsinline', '');
+      v.setAttribute('webkit-playsinline', '');
       v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain';
+      v.onerror = function () {
+        var tip = document.createElement('div');
+        tip.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#aaa;font-size:13px;line-height:1.9';
+        tip.innerHTML = '这个浏览器解不了这段视频的编码（' + (blob.type || '未知') + '）<br>' +
+          '<span style="opacity:.6;font-size:12px">点右上角 ⤓ 保存，用系统播放器打开</span>';
+        s.body.append(tip);
+      };
       s.body.append(v);
       v.play().catch(function () {});
     } else {
@@ -79,6 +104,10 @@
     v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:cover';
     s.body.append(v);
 
+    // 把关闭回调接上：关面板前先录像落盘 + 释放摄像头
+    var closeBtn = s.bar.lastChild;
+    closeBtn.addEventListener('click', function () { cleanup(); }, true);
+
     var ctl = document.createElement('div');
     ctl.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;padding:14px;background:linear-gradient(transparent,rgba(0,0,0,.6))';
 
@@ -88,7 +117,15 @@
     ctl.append(shot, rec, flip);
     s.body.append(ctl);
 
-    var stream = null, facing = 'environment', recorder = null, chunks = [];
+    var stream = null, facing = 'environment', recorder = null, chunks = [], mime = '';
+
+    function pickMime() {
+      var list = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      for (var i = 0; i < list.length; i++) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(list[i])) return list[i];
+      }
+      return '';
+    }
 
     function open(f) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -131,13 +168,16 @@
       }
       if (typeof MediaRecorder === 'undefined') return alert('当前浏览器不支持录像');
       chunks = [];
+      mime = pickMime();
       try {
-        recorder = new MediaRecorder(stream);
+        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       } catch (e) { return alert('录像失败：' + e.message); }
       recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
       recorder.onstop = function () {
-        var b = new Blob(chunks, { type: chunks[0] ? chunks[0].type : 'video/webm' });
-        view(b, 'record.webm');
+        var type = (chunks[0] && chunks[0].type) || mime || 'video/webm';
+        var b = new Blob(chunks, { type: type });
+        if (!b.size) return alert('这段没录到内容，试试重新录制');
+        view(b, /mp4/.test(type) ? 'record.mp4' : 'record.webm');
       };
       recorder.start();
       rec.textContent = '⏹ 停止';
@@ -150,13 +190,14 @@
       open(facing);
     };
 
-    // 关闭时释放摄像头
-    s.root.addEventListener('DOMNodeRemoved', function () {});
+    // 关闭时释放摄像头 / 收尾正在录的片段
+    function cleanup() {
+      try { if (recorder && recorder.state === 'recording') recorder.stop(); } catch (e) {}
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      stream = null;
+    }
     var obs = new MutationObserver(function () {
-      if (!document.getElementById('__md') && stream) {
-        stream.getTracks().forEach(function (t) { t.stop(); });
-        obs.disconnect();
-      }
+      if (!document.getElementById('__md')) { cleanup(); obs.disconnect(); }
     });
     obs.observe(document.body, { childList: true });
 
