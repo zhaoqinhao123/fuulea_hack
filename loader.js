@@ -8,6 +8,8 @@
   var MODS = [
     ['💰 积分', 'mods/score.js'],
     ['🐾 灵宠', 'mods/pets.js'],
+    ['🖼 宠物图', 'mods/petimg.js'],
+    ['➕ 加宠物', 'mods/petmax.js'],
     ['🔓 解锁4只', 'mods/unlock.js'],
     ['✏️ 改名', 'mods/rename.js'],
     ['🧹 清答案', 'mods/clean.js'],
