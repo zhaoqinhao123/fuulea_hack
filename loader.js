@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.0/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.1/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.0/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.1/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -260,6 +260,59 @@
     if (mini) { minBtn.onclick(); return; }
     debugMenu();
   };
+
+  // ── 通用小窗：给模块的全屏遮罩自动加一个 ◱ 按钮 ──
+  (function () {
+    var seen = new WeakSet();
+    function decorate(el) {
+      if (seen.has(el) || el.dataset.fhMini) return;
+      seen.add(el);
+      el.dataset.fhMini = '1';
+      var b = document.createElement('button');
+      b.textContent = '◱';
+      b.title = '小窗/全屏';
+      b.style.cssText = 'position:absolute;top:8px;right:8px;z-index:9;width:38px;height:34px;border:0;border-radius:9px;background:rgba(0,0,0,.45);color:#bbb;font-size:15px;cursor:pointer';
+      b.onclick = function (e) {
+        e.stopPropagation();
+        if (el.dataset.mini === '1') {
+          el.dataset.mini = '0';
+          el.style.inset = '0';
+          el.style.left = '';
+          el.style.top = '';
+          el.style.transform = '';
+          el.style.width = '';
+          el.style.height = '';
+          el.style.borderRadius = '0';
+          el.style.boxShadow = 'none';
+        } else {
+          el.dataset.mini = '1';
+          el.style.inset = 'auto';
+          el.style.left = '50%';
+          el.style.top = '50%';
+          el.style.transform = 'translate(-50%,-50%)';
+          el.style.width = 'min(72vw,760px)';
+          el.style.height = '72vh';
+          el.style.borderRadius = '14px';
+          el.style.boxShadow = '0 20px 60px rgba(0,0,0,.6)';
+        }
+      };
+      el.appendChild(b);
+    }
+    new MutationObserver(function (ms) {
+      ms.forEach(function (m) {
+        [].forEach.call(m.addedNodes, function (n) {
+          if (n.nodeType === 1 && n.tagName === 'DIV') {
+            var cs = n.style;
+            var full = (cs.position === 'fixed') && (
+              cs.inset === '0px' ||
+              (cs.top === '0px' && cs.left === '0px' && cs.right === '0px' && cs.bottom === '0px')
+            );
+            if (full) decorate(n);
+          }
+        });
+      });
+    }).observe(document.body, { childList: true });
+  })();
 
   function debugMenu() {
     if (document.getElementById('__fhd')) { document.getElementById('__fhd').remove(); return; }

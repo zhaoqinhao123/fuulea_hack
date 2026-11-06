@@ -181,7 +181,14 @@
     state.name = nameIn.value.trim();
     if (!isNaN(sc) && sc >= 0) { state.score = sc; state.earned = sc; }
     try { save(); } catch (e) {}
-    try { if (typeof saveRank === 'function') saveRank(rankList); } catch (e) {}
+    try {
+      // 把玩家当前分数同步进排行榜，避免名单里名字改了分数却对不上
+      var hit = null;
+      for (var i = 0; i < rankList.length; i++) if (rankList[i].name === state.name) { hit = rankList[i]; break; }
+      if (hit) hit.earned = state.earned;
+      else if (state.name) rankList.push({ name: state.name, earned: state.earned, correct: 0, rounds: 0 });
+      if (typeof saveRank === 'function') saveRank(rankList);
+    } catch (e) {}
     try { if (typeof renderHome === 'function') renderHome(); } catch (e) {}
     try { if (typeof renderRank === 'function') renderRank(); } catch (e) {}
     save.textContent = '已保存';

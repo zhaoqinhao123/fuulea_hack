@@ -9,6 +9,18 @@
   state.earned = n;
   save();
 
+  // 同步到排行榜，否则排名和分数对不上
+  try {
+    if (typeof loadRank === 'function' && typeof saveRank === 'function') {
+      var list = loadRank();
+      var me = null;
+      for (var i = 0; i < list.length; i++) if (list[i].name === state.name) { me = list[i]; break; }
+      if (me) me.earned = state.earned;
+      else if (state.name) list.push({ name: state.name, earned: state.earned, correct: 0, rounds: 0 });
+      saveRank(list);
+    }
+  } catch (e) {}
+
   var el = document.getElementById('scoreTop');
   if (el) el.textContent = n;
   if (typeof renderHome === 'function') renderHome();
