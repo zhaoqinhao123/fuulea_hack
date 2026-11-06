@@ -155,11 +155,21 @@
     var close = ib('✕', '关闭');
     close.onclick = function () { win.remove(); };
 
+    var saved = null;
     max.onclick = function () {
       if (win.dataset.max === '1') {
+        // 还原：用记录下来的位置/尺寸，别依赖 cssText 字符串匹配
         win.dataset.max = '0';
-        win.style.cssText = win.style.cssText.replace(/left:0;top:0;width:100vw;height:100vh;border-radius:0;/, 'left:50%;top:50%;transform:translate(-50%,-50%);width:min(76vw,900px);height:70vh;min-width:280px;min-height:200px;');
+        var r = saved || { l: 40, t: 40, w: 620, h: 460 };
+        win.style.transform = 'none';
+        win.style.left = Math.max(0, Math.min(r.l, innerWidth - 200)) + 'px';
+        win.style.top = Math.max(0, Math.min(r.t, innerHeight - 160)) + 'px';
+        win.style.width = Math.min(r.w, innerWidth) + 'px';
+        win.style.height = Math.min(r.h, innerHeight) + 'px';
+        win.style.borderRadius = '12px';
       } else {
+        var rect = win.getBoundingClientRect();
+        saved = { l: rect.left, t: rect.top, w: rect.width, h: rect.height };
         win.dataset.max = '1';
         win.style.left = '0';
         win.style.top = '0';
@@ -172,6 +182,8 @@
 
     var frame = document.createElement('iframe');
     frame.src = url;
+    frame.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture; clipboard-write');
+    frame.setAttribute('allowfullscreen', '');
     frame.style.cssText = 'flex:1;width:100%;border:0;background:#fff';
 
     var tip = document.createElement('div');
