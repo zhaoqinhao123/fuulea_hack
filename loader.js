@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.8/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.9/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.8/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v1.9/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];

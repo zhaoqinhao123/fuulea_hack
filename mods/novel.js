@@ -30,6 +30,39 @@
     });
   }
 
+  // GitLab 的 /-/raw/ 没有 CORS，自动改写成带 ACAO 的 API 端点
+  function normGitlab(u) {
+    var m = u.match(/^https?:\/\/gitlab\.com\/([^\/]+)\/([^\/]+)\/-\/raw\/([^\/]+)\/(.+)$/);
+    if (!m) return u;
+    return 'https://gitlab.com/api/v4/projects/' + encodeURIComponent(m[1] + '/' + m[2]) +
+      '/repository/files/' + encodeURIComponent(m[4]) + '/raw?ref=' + encodeURIComponent(m[3]);
+  }
+
+  function getText(url, ms) {
+    ms = ms || 15000;
+    return new Promise(function (resolve, reject) {
+      var ctrl = window.AbortController ? new AbortController() : null;
+      var settled = false, timer;
+      function ok(t) { if (settled) return; settled = true; clearTimeout(timer); resolve(t); }
+      function fail(e) { if (settled) return; settled = true; clearTimeout(timer); reject(e); }
+      function xhr() {
+        try {
+          var x = new XMLHttpRequest();
+          x.open('GET', url, true);
+          x.timeout = ms;
+          x.onload = function () { (x.status >= 200 && x.status < 300) ? ok(x.responseText) : fail(new Error('XHR ' + x.status)); };
+          x.onerror = function () { fail(new Error('XHR error')); };
+          x.ontimeout = function () { fail(new Error('XHR timeout')); };
+          x.send();
+        } catch (e) { fail(e); }
+      }
+      timer = setTimeout(xhr, ms);
+      fetch(url, ctrl ? { signal: ctrl.signal, credentials: 'omit' } : { credentials: 'omit' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+        .then(ok, xhr);
+    });
+  }
+
   // ── UI ──
   var root = document.createElement('div');
   root.id = '__nv';
@@ -82,8 +115,33 @@
   hint.style.cssText = 'font-size:12px;color:#666;line-height:1.8';
   hint.textContent = '默认匹配「第X章/回/节/卷」。导入后按正则切分，可随时改正则重新切。';
 
+  var urlIn = document.createElement('input');
+  urlIn.placeholder = '或粘贴 TXT 直链（GitLab /-/raw/ 会自动转成 API 地址）';
+  urlIn.style.cssText = 'width:100%;box-sizing:border-box;padding:10px;border:1px solid #333;border-radius:9px;background:#101014;color:#ddd;font:12px/1.5 ui-monospace,monospace';
+  var loadBtn = document.createElement('button');
+  loadBtn.textContent = '从链接加载';
+  loadBtn.style.cssText = 'height:38px;padding:0 16px;border:0;border-radius:9px;background:#3a6df0;color:#fff;font:13px/1 inherit;cursor:pointer';
+  var urlMsg = document.createElement('div');
+  urlMsg.style.cssText = 'font-size:12px;color:#888';
+
+  loadBtn.onclick = function () {
+    var u = urlIn.value.trim();
+    if (!u) return;
+    urlMsg.textContent = '加载中…';
+    loadBtn.disabled = true;
+    getText(normGitlab(u)).then(function (t) {
+      text = t;
+      urlMsg.textContent = '已加载 ' + t.length + ' 字';
+      setup.style.display = 'none';
+      parse();
+    }).catch(function (e) {
+      urlMsg.textContent = '失败：' + e.message;
+      loadBtn.disabled = false;
+    });
+  };
+
   main.append(setup);
-  setup.append(file, reIn, hint);
+  setup.append(file, urlIn, loadBtn, urlMsg, reIn, hint);
 
   var text = '';
   var chapters = [];
