@@ -126,6 +126,28 @@
       var nm = input(p.name || '', '名字');
       nm.oninput = function () { p.name = nm.value; };
 
+      // 等级：由 earned 反推，改一只会影响后面几只（这是原本的累积模型）
+      var st = document.createElement('select');
+      st.style.cssText = 'width:74px;padding:8px;border:1px solid #333;border-radius:8px;background:#101014;color:#ddd;font:12px/1 inherit';
+      var curStage = (typeof petStage === 'function') ? petStage(i) : 0;
+      STAGE_NAMES.forEach(function (label, si) {
+        var o = document.createElement('option');
+        o.value = si;
+        o.textContent = label;
+        o.selected = si === curStage;
+        st.append(o);
+      });
+      st.title = '当前：' + STAGE_NAMES[curStage] + '（' + (SEG_START[i] || 0) + ' 起）';
+      st.onchange = function () {
+        var si = parseInt(st.value, 10) || 0;
+        var req = PET_REQ[i] || 0;
+        var ratio = RATIOS[si] || 0;
+        var need = (SEG_START[i] || 0) + Math.ceil(req * ratio);
+        state.earned = need;
+        state.score = Math.max(state.score, need);
+        drawPets();
+      };
+
       var up = document.createElement('button');
       up.textContent = '↑';
       up.style.cssText = 'width:30px;height:32px;border:1px solid #333;border-radius:8px;background:#1c1c22;color:#aaa;cursor:pointer';
@@ -137,7 +159,7 @@
         drawPets();
       };
 
-      row.append(sel, nm, up, delBtn(function () {
+      row.append(sel, nm, st, up, delBtn(function () {
         state.pets.splice(i, 1);
         drawPets();
       }));
