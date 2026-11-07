@@ -26,8 +26,10 @@
     if (fn) b.onclick = fn;
     return b;
   }
+  var tutB = ib('❓', function () { tutorial(); }, '教程');
+  tutB.style.fontSize = '16px';
   var closeB = ib('✕', function () { root.remove(); stage.remove(); }, '关闭');
-  bar.append(title, closeB);
+  bar.append(title, tutB, closeB);
 
   var body = document.createElement('div');
   body.style.cssText = 'flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px';
@@ -193,4 +195,118 @@
   }
 
   go.onclick = play;
+
+  // ── 教程 ──
+  function tutorial() {
+    var seen = false;
+    try { seen = localStorage.getItem('fh:tile:seen') === '1'; } catch (e) {}
+
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(6,6,9,.86);' +
+      'display:flex;align-items:center;justify-content:center;padding:14px';
+
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;' +
+      'background:#1b1b20;border:1px solid #33333b;border-radius:14px;overflow:hidden';
+
+    var hd = document.createElement('div');
+    hd.textContent = '🧩 屏幕转印 · 教程';
+    hd.style.cssText = 'padding:12px 14px;font-weight:700;color:#ccc;border-bottom:1px solid #2c2c34';
+
+    var box = document.createElement('div');
+    box.style.cssText = 'flex:1;overflow:auto;padding:14px;font-size:13px;line-height:1.85;color:#bbb';
+
+    var cols = plan ? plan.cols : 'A', rows = plan ? plan.rows : 'B';
+    var cmd = 'python3 tools/stitch.py rec.mp4 --cols ' + cols + ' --rows ' + rows + ' -o out.png';
+
+    function step(n, t, body) {
+      var d = document.createElement('div');
+      d.style.cssText = 'display:flex;gap:9px;margin:0 0 12px';
+      var num = document.createElement('div');
+      num.textContent = n;
+      num.style.cssText = 'flex:0 0 22px;height:22px;border-radius:50%;background:#3a6df0;color:#fff;' +
+        'font:700 12px/22px inherit;text-align:center';
+      var txt = document.createElement('div');
+      txt.style.cssText = 'flex:1;min-width:0';
+      var h = document.createElement('div');
+      h.textContent = t;
+      h.style.cssText = 'color:#ddd;font-weight:600;margin-bottom:2px';
+      txt.append(h);
+      if (body) {
+        var b = document.createElement('div');
+        b.style.cssText = 'color:#8f8f9e;font-size:12.5px';
+        b.textContent = body;
+        txt.append(b);
+      }
+      d.append(num, txt);
+      box.append(d);
+    }
+
+    step('1', '取图', '点「📷 拍摄」现场拍，或「🖼 选图」挑一张。拍完图片直接进内存，不用去相册里找。');
+    step('2', '记下分块', '面板会显示「cols=… rows=…」。这是拼图要用的参数，两个数必须和录屏时一致。');
+    step('3', '先开录屏', '用系统录屏，画质调到最高（默认可能压到 720p，那样还原上限也跟着降）。');
+    step('4', '回来点开始', '转印时我们的界面全部隐藏。开头黑屏 2 秒给录屏留余量，之后每块停留一次，播完自动返回。');
+    step('5', '停止录屏', '看到「播放完成」再停，别提前停，否则最后一块会缺。');
+    step('6', '送到电脑', '把 mp4 传过去，在仓库目录执行下面这条命令（参数已按当前图片填好）：');
+
+    var code = document.createElement('div');
+    code.textContent = cmd;
+    code.style.cssText = 'margin:6px 0 0;padding:9px 10px;border-radius:9px;background:#101014;' +
+      'border:1px solid #2a2a32;color:#9fd6a0;font:11.5px/1.6 ui-monospace,Menlo,monospace;' +
+      'white-space:pre-wrap;word-break:break-all;user-select:text;-webkit-user-select:text';
+    box.append(code);
+
+    var cp = document.createElement('button');
+    cp.textContent = '复制命令';
+    cp.style.cssText = 'margin:6px 0 14px;height:32px;padding:0 14px;border:1px solid #33333b;' +
+      'border-radius:8px;background:#222228;color:#bbb;font:12px/1 inherit;cursor:pointer';
+    cp.onclick = function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmd).then(function () { cp.textContent = '已复制'; },
+          function () { cp.textContent = '复制失败，长按上面手动选'; });
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = cmd;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); cp.textContent = '已复制'; } catch (e) { cp.textContent = '复制失败'; }
+        ta.remove();
+      }
+    };
+    box.append(cp);
+
+    var tips = document.createElement('div');
+    tips.style.cssText = 'padding:10px 12px;border-radius:10px;background:#191d16;border:1px solid #2e3a2a;' +
+      'color:#8fa889;font-size:12px;line-height:1.8';
+    tips.textContent = '常见问题：① 录屏分辨率要等于屏幕（用 ffprobe 查，期望 1920x1200 这类）② 边缘有状态栏或圆角，加 --crop 0:0:屏宽:屏高 ③ 脚本提示块数对不上，说明录屏中途被打断或提前停止。';
+    box.append(tips);
+
+    var ft = document.createElement('div');
+    ft.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #2c2c34';
+    var wrapChk = document.createElement('label');
+    wrapChk.style.cssText = 'flex:1;display:flex;align-items:center;gap:7px;font-size:12px;color:#8a8a99';
+    var chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = seen;
+    chk.style.cssText = 'width:16px;height:16px;accent-color:#3a6df0';
+    wrapChk.append(chk, document.createTextNode('以后不再自动弹出'));
+    var ok = document.createElement('button');
+    ok.textContent = '知道了';
+    ok.style.cssText = 'height:36px;padding:0 18px;border:0;border-radius:9px;background:#3a6df0;color:#fff;font:13px/1 inherit;cursor:pointer';
+    ok.onclick = function () {
+      try { localStorage.setItem('fh:tile:seen', chk.checked ? '1' : '0'); } catch (e) {}
+      wrap.remove();
+    };
+    ft.append(wrapChk, ok);
+
+    card.append(hd, box, ft);
+    wrap.append(card);
+    wrap.onclick = function (e) { if (e.target === wrap) wrap.remove(); };
+    document.body.append(wrap);
+  }
+
+  // 首次使用自动弹一次
+  try {
+    if (localStorage.getItem('fh:tile:seen') !== '1') setTimeout(tutorial, 260);
+  } catch (e) {}
 })();
