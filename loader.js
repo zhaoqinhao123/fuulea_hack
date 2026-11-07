@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.2/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.3/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.2/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.3/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -131,11 +131,12 @@
       '#__fh .fh-cat{width:24px;height:24px;flex-shrink:0;border:0;border-radius:50%;',
       'background:transparent;font:15px/1 inherit;cursor:pointer;padding:0;',
       'display:grid;place-items:center}',
-      '#__fh.is-mini .fh-panel{width:52px;border-radius:50%;border-color:rgba(255,255,255,.18);',
+      '#__fh.is-mini .fh-panel{width:88px;border-radius:999px;border-color:rgba(255,255,255,.18);',
       'box-shadow:0 10px 26px rgba(0,0,0,.5)}',
-      '#__fh.is-mini .fh-head{padding:9px;justify-content:center;cursor:pointer}',
-      '#__fh.is-mini .fh-title,#__fh.is-mini .fh-tabs,#__fh.is-mini .fh-content,#__fh.is-mini .fh-ico{display:none}',
-      '#__fh.is-mini .fh-cat{width:34px;height:34px;font-size:22px}'
+      '#__fh.is-mini .fh-head{padding:5px 6px;gap:2px;justify-content:center;cursor:move}',
+      '#__fh.is-mini .fh-title,#__fh.is-mini .fh-tabs,#__fh.is-mini .fh-content,#__fh.is-mini .fh-min{display:none}',
+      '#__fh.is-mini .fh-ico{width:26px;height:26px;font:13px/1 inherit;border-radius:50%}',
+      '#__fh.is-mini .fh-cat{width:32px;height:32px;font-size:20px}'
     ].join('');
     (document.head || document.documentElement).appendChild(stEl);
   }
@@ -164,7 +165,9 @@
     return b;
   }
   var minBtn = icon('−', '收起成小圆点');
+  minBtn.className = 'fh-ico fh-min';
   var closeBtn = icon('✕', '关闭');
+  closeBtn.className = 'fh-ico fh-close';
   closeBtn.onclick = function () { root.remove(); };
   head.append(cat, title, minBtn, closeBtn);
 
@@ -268,6 +271,32 @@
     content.append(wrap);
   }
 
+  // 缩放手柄（右下角，仅主面板）
+  panel.style.position = 'relative';
+  var pGrip = document.createElement('div');
+  pGrip.style.cssText = 'position:absolute;right:3px;bottom:3px;width:18px;height:18px;cursor:se-resize;' +
+    'touch-action:none;opacity:.55;background:linear-gradient(135deg,transparent 44%,rgba(255,255,255,.35) 44%,' +
+    'rgba(255,255,255,.35) 52%,transparent 52%,transparent 64%,rgba(255,255,255,.35) 64%,rgba(255,255,255,.35) 72%,transparent 72%)';
+  (function () {
+    var g = null;
+    pGrip.addEventListener('pointerdown', function (e) {
+      e.stopPropagation(); e.preventDefault();
+      var r = panel.getBoundingClientRect();
+      panel.style.width = r.width + 'px';
+      panel.style.height = r.height + 'px';
+      panel.style.maxHeight = 'none';
+      g = { x: e.clientX, y: e.clientY, w: r.width, h: r.height };
+      try { pGrip.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+    pGrip.addEventListener('pointermove', function (e) {
+      if (!g) return;
+      panel.style.width = Math.max(230, g.w + e.clientX - g.x) + 'px';
+      panel.style.height = Math.max(170, g.h + e.clientY - g.y) + 'px';
+    });
+    pGrip.addEventListener('pointerup', function () { g = null; });
+    pGrip.addEventListener('pointercancel', function () { g = null; });
+  })();
+  panel.append(pGrip);
   panel.append(head, tabs, content);
   root.append(panel);
   document.body.append(root);
@@ -319,59 +348,151 @@
     debugMenu();
   };
 
-  // ── 通用小窗：给模块的全屏遮罩自动加一个 ◱ 按钮 ──
+  // ── 模块窗口：拖动 / 缩放 / 小窗（按钮插进标题栏，不覆盖原有 ✕）──
   (function () {
     var seen = new WeakSet();
-    function decorate(el) {
-      if (seen.has(el) || el.dataset.fhMini) return;
-      seen.add(el);
-      el.dataset.fhMini = '1';
-      var b = document.createElement('button');
-      b.textContent = '◱';
-      b.title = '小窗/全屏';
-      b.style.cssText = 'position:absolute;top:8px;right:8px;z-index:9;width:38px;height:34px;border:0;border-radius:9px;background:rgba(0,0,0,.45);color:#bbb;font-size:15px;cursor:pointer';
-      b.onclick = function (e) {
-        e.stopPropagation();
-        if (el.dataset.mini === '1') {
-          el.dataset.mini = '0';
-          el.style.inset = '0';
-          el.style.left = '';
-          el.style.top = '';
-          el.style.transform = '';
-          el.style.width = '';
-          el.style.height = '';
-          el.style.borderRadius = '0';
-          el.style.boxShadow = 'none';
-        } else {
-          el.dataset.mini = '1';
-          el.style.inset = 'auto';
-          el.style.left = '50%';
-          el.style.top = '50%';
-          el.style.transform = 'translate(-50%,-50%)';
-          el.style.width = 'min(72vw,760px)';
-          el.style.height = '72vh';
-          el.style.borderRadius = '14px';
-          el.style.boxShadow = '0 20px 60px rgba(0,0,0,.6)';
-        }
-      };
-      el.appendChild(b);
-    }
-    new MutationObserver(function (ms) {
-      ms.forEach(function (m) {
-        [].forEach.call(m.addedNodes, function (n) {
-          if (n.nodeType === 1 && n.tagName === 'DIV') {
-            var cs = n.style;
-            var full = (cs.position === 'fixed') && (
-              cs.inset === '0px' ||
-              (cs.top === '0px' && cs.left === '0px' && cs.right === '0px' && cs.bottom === '0px')
-            );
-            if (full) decorate(n);
-          }
-        });
-      });
-    }).observe(document.body, { childList: true });
-  })();
 
+    function findBar(el) {
+      for (var i = 0; i < el.children.length; i++) {
+        var c = el.children[i];
+        if (c.tagName !== 'DIV') continue;
+        var r = c.getBoundingClientRect();
+        if (r.height >= 22 && r.height <= 84) return c;
+      }
+      return null;
+    }
+    function findClose(el) {
+      var bs = el.querySelectorAll('button');
+      for (var i = 0; i < bs.length; i++) {
+        var t = (bs[i].textContent || '').trim();
+        if (t === '\u2715' || t === '\u00d7' || t === 'X') return bs[i];
+      }
+      return null;
+    }
+
+    function shell(el) {
+      if (seen.has(el) || el.dataset.fhWin) return;
+      var bar = findBar(el);
+      var xb = findClose(el);
+      if (!bar || !xb) return;
+      if (getComputedStyle(el).position !== 'fixed') return;
+      seen.add(el);
+      el.dataset.fhWin = '1';
+
+      // 原 ✕ 字形居中，修掉「绘制有问题」
+      xb.style.display = 'grid';
+      xb.style.placeItems = 'center';
+      xb.style.padding = '0';
+      xb.style.lineHeight = '1';
+      xb.style.fontSize = '15px';
+
+      // 小窗按钮插进标题栏，位于 ✕ 左侧，绝不遮挡
+      var mb = document.createElement('button');
+      mb.textContent = '\u25f1';
+      mb.title = '小窗 / 全屏';
+      mb.style.cssText = 'min-width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;' +
+        'border-radius:9px;background:transparent;color:#8a8a99;font:15px/1 inherit;cursor:pointer;flex-shrink:0';
+      xb.parentNode.insertBefore(mb, xb);
+
+      // 右下角缩放手柄
+      var grip = document.createElement('div');
+      grip.style.cssText = 'display:none;position:absolute;right:2px;bottom:2px;width:20px;height:20px;z-index:9;' +
+        'cursor:se-resize;touch-action:none;border-radius:0 0 14px 0;' +
+        'background:linear-gradient(135deg,transparent 45%,rgba(255,255,255,.32) 45%,rgba(255,255,255,.32) 55%,transparent 55%,' +
+        'transparent 67%,rgba(255,255,255,.32) 67%,rgba(255,255,255,.32) 77%,transparent 77%)';
+      el.appendChild(grip);
+
+      function toFloat() {
+        var W = Math.min(Math.round(innerWidth * 0.9), 760);
+        var H = Math.min(Math.round(innerHeight * 0.78), 720);
+        el.dataset.fhFloat = '1';
+        el.style.inset = 'auto';
+        el.style.transform = 'none';
+        el.style.left = Math.max(6, Math.round((innerWidth - W) / 2)) + 'px';
+        el.style.top = Math.max(30, Math.round((innerHeight - H) / 2)) + 'px';
+        el.style.right = 'auto';
+        el.style.bottom = 'auto';
+        el.style.width = W + 'px';
+        el.style.height = H + 'px';
+        el.style.borderRadius = '14px';
+        el.style.boxShadow = '0 20px 60px rgba(0,0,0,.6)';
+        el.style.overflow = 'hidden';
+        grip.style.display = 'block';
+        mb.style.color = '#5b8dfa';
+      }
+      function toFull() {
+        el.dataset.fhFloat = '0';
+        el.style.inset = '0';
+        el.style.left = '';
+        el.style.top = '';
+        el.style.right = '';
+        el.style.bottom = '';
+        el.style.transform = '';
+        el.style.width = '';
+        el.style.height = '';
+        el.style.borderRadius = '';
+        el.style.boxShadow = '';
+        el.style.overflow = '';
+        grip.style.display = 'none';
+        mb.style.color = '#8a8a99';
+      }
+      mb.onclick = function (e) {
+        e.stopPropagation();
+        if (el.dataset.fhFloat === '1') toFull(); else toFloat();
+      };
+
+      // 拖动标题栏空白处
+      var ds = null;
+      bar.style.touchAction = 'none';
+      bar.addEventListener('pointerdown', function (e) {
+        if (e.target.closest && e.target.closest('button,input,textarea,select,a,label')) return;
+        if (el.dataset.fhFloat !== '1') toFloat();
+        var r = el.getBoundingClientRect();
+        ds = { x: e.clientX, y: e.clientY, l: r.left, t: r.top };
+        try { bar.setPointerCapture(e.pointerId); } catch (err) {}
+        e.preventDefault();
+      });
+      bar.addEventListener('pointermove', function (e) {
+        if (!ds) return;
+        el.style.left = Math.max(2, Math.min(ds.l + e.clientX - ds.x, innerWidth - 70)) + 'px';
+        el.style.top = Math.max(2, Math.min(ds.t + e.clientY - ds.y, innerHeight - 50)) + 'px';
+      });
+      bar.addEventListener('pointerup', function () { ds = null; });
+      bar.addEventListener('pointercancel', function () { ds = null; });
+
+      // 缩放
+      var rs = null;
+      grip.addEventListener('pointerdown', function (e) {
+        e.stopPropagation(); e.preventDefault();
+        var r = el.getBoundingClientRect();
+        rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height };
+        try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      grip.addEventListener('pointermove', function (e) {
+        if (!rs) return;
+        el.style.width = Math.max(280, rs.w + e.clientX - rs.x) + 'px';
+        el.style.height = Math.max(200, rs.h + e.clientY - rs.y) + 'px';
+      });
+      grip.addEventListener('pointerup', function () { rs = null; });
+      grip.addEventListener('pointercancel', function () { rs = null; });
+    }
+
+    function scan(n) {
+      if (!n || n.nodeType !== 1) return;
+      if (n.tagName === 'DIV' && n.id && n.id !== '__fh' && n.id !== '__fw' && n.style.position === 'fixed') {
+        var cs = n.style;
+        var full = cs.inset === '0' || cs.inset === '0px' ||
+          (cs.top === '0px' && cs.left === '0px' && cs.right === '0px' && cs.bottom === '0px');
+        if (full) shell(n);
+      }
+      [].forEach.call(n.children || [], scan);
+    }
+
+    new MutationObserver(function (ms) {
+      ms.forEach(function (m) { [].forEach.call(m.addedNodes, scan); });
+    }).observe(document.body, { childList: true });
+    [].forEach.call(document.body.children, scan);
+  })();
 
   // ── 排行榜渲染加固：原版用 innerHTML 拼名字，改名会串标签 ──
   (function () {
