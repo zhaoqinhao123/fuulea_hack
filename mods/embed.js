@@ -70,13 +70,14 @@
 
   // 常用列表
   var grid = document.createElement('div');
-  grid.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px';
+  // 标签多了横向滑动，不折行（折行会顶出卡片）
+  grid.style.cssText = 'display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto;overflow-y:hidden;padding:0 0 8px;margin-bottom:-4px;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity';
 
   function draw() {
     grid.innerHTML = '';
     sites.forEach(function (s, i) {
       var chip = document.createElement('div');
-      chip.style.cssText = 'display:flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid #33333b;border-radius:10px;background:#222228;cursor:pointer;max-width:100%';
+      chip.style.cssText = 'flex:0 0 auto;scroll-snap-align:start;display:flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid #33333b;border-radius:10px;background:#222228;cursor:pointer;max-width:72vw';
       var nm = document.createElement('span');
       nm.textContent = s.n;
       nm.style.cssText = 'font-size:13px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';

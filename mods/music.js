@@ -1,10 +1,11 @@
-/* 本地音乐：GitLab 整包 → 解压 → IndexedDB 缓存 → 单实例 <audio> 连播 */
+/* 本地音乐：多仓库/多分支 → 专辑分组 → 缓存或流播 → 单实例 <audio> 连播 */
 (function () {
   var OLD = document.getElementById('__ms');
   if (OLD) { OLD.remove(); return; }
 
   var AUD = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|weba)$/i;
-  var RKEY = 'fh:music:repo';
+  var RKEY = '***';
+  var AKEY = '***';
   var DEF = 'xiao_long_long/music@master';
   var DBNAME = 'fh_media';
 
@@ -33,6 +34,14 @@
       });
     });
   }
+  function del(store, key) {
+    return db().then(function (d) {
+      return new Promise(function (res) {
+        var t = d.transaction(store, 'readwrite').objectStore(store)['delete'](key);
+        t.onsuccess = t.onerror = function () { res(true); };
+      });
+    });
+  }
   function getAll(store) {
     return db().then(function (d) {
       return new Promise(function (res, rej) {
@@ -51,18 +60,8 @@
       });
     });
   }
-  function clearTracks() {
-    return db().then(function (d) {
-      return new Promise(function (res) {
-        var tx = d.transaction(['blob', 'meta'], 'readwrite');
-        tx.objectStore('blob').clear();
-        tx.objectStore('meta').clear();
-        tx.oncomplete = function () { res(true); };
-      });
-    });
-  }
 
-  // ── 仓库解析 ──
+  // ── 仓库标识 ──
   function parseRepo(s) {
     s = (s || '').trim();
     var m = s.match(/gitlab\.com\/([^\/\s]+)\/([^\/\s]+?)(?:\/-\/tree\/([^\/\s?#]+)|\/tree\/([^\/\s?#]+))?\/?(?:\.git)?$/);
@@ -72,17 +71,18 @@
     if (/^[\w.\-]+\/[\w.\-]+$/.test(s)) return { proj: s, ref: 'master' };
     return null;
   }
+  function rid(r) { return r.proj + '@' + r.ref; }
   function enc(p) { return encodeURIComponent(p); }
-  var REPO = parseRepo((function () { try { return localStorage.getItem(RKEY) || DEF; } catch (e) { return DEF; } })()) || parseRepo(DEF);
-  function rawURL(path) {
-    return 'https://gitlab.com/api/v4/projects/' + enc(REPO.proj) +
-      '/repository/files/' + enc(path) + '/raw?ref=' + enc(REPO.ref);
+  function bkey(ridStr, path) { return ridStr + '||' + path; }
+  function archiveURL(r) {
+    return 'https://gitlab.com/api/v4/projects/' + enc(r.proj) + '/repository/archive.zip?sha=' + enc(r.ref);
   }
-  function archiveURL(proj, ref) {
-    return 'https://gitlab.com/api/v4/projects/' + enc(proj) + '/repository/archive.zip?sha=' + enc(ref);
+  function rawURL(r, path) {
+    return 'https://gitlab.com/api/v4/projects/' + enc(r.proj) +
+      '/repository/files/' + enc(path) + '/raw?ref=' + enc(r.ref);
   }
 
-  // ── 单实例音频（关窗不停播，重开接上）──
+  // ── 单实例音频 ──
   function getAudio() {
     if (!window.__fhAudio) {
       var a = new Audio();
@@ -111,23 +111,27 @@
     if (fn) b.onclick = fn;
     return b;
   }
-  var impBtn = ib('⤓', function () { importPanel(); }, '导入整包（小仓库）');
-  var albBtn = ib('☁', function () { albumPanel(); }, '按专辑缓存');
+  var albBtn = ib('☁', function () { albumPanel(); }, '按专辑缓存（大仓库）');
+  var impBtn = ib('⤓', function () { importPanel(); }, '整包导入（小仓库）');
   var close = ib('✕', function () { root.remove(); }, '关闭（音乐继续播）');
   bar.append(title, albBtn, impBtn, close);
 
   var msg = document.createElement('div');
   msg.style.cssText = 'padding:8px 12px 4px;font-size:11.5px;color:#777;flex-shrink:0';
 
+  // 仓库条
+  var repoBar = document.createElement('div');
+  repoBar.style.cssText = 'display:flex;gap:6px;overflow-x:auto;padding:0 10px 8px;flex-shrink:0';
+  // 专辑条
+  var chips = document.createElement('div');
+  chips.style.cssText = 'display:flex;gap:6px;overflow-x:auto;padding:0 10px 8px;flex-shrink:0';
+  // 搜索条
   var r2 = document.createElement('div');
   r2.style.cssText = 'display:flex;gap:6px;padding:0 10px 8px;flex-shrink:0';
   var qIn = document.createElement('input');
   qIn.placeholder = '搜索曲名 / 专辑';
   qIn.style.cssText = 'flex:1;min-width:0;height:32px;padding:0 10px;border:1px solid #2a2a32;border-radius:9px;background:#131317;color:#ccc;font:12px/1 inherit';
   r2.append(qIn);
-
-  var chips = document.createElement('div');
-  chips.style.cssText = 'display:flex;gap:6px;overflow-x:auto;padding:0 10px 8px;flex-shrink:0';
 
   var body = document.createElement('div');
   body.style.cssText = 'flex:1;overflow:auto;min-height:0;padding:0 6px 6px';
@@ -149,7 +153,6 @@
   var seek = document.createElement('input');
   seek.type = 'range'; seek.min = 0; seek.max = 1000; seek.value = 0;
   seek.style.cssText = 'width:100%;accent-color:#3a6df0';
-
   var line2 = document.createElement('div');
   line2.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:11px;color:#666';
   var timeEl = document.createElement('span');
@@ -158,15 +161,18 @@
   vol.type = 'range'; vol.min = 0; vol.max = 100; vol.value = 100;
   vol.style.cssText = 'flex:1;accent-color:#555';
   line2.append(timeEl, vol);
-
   player.append(line1, seek, line2);
-  root.append(bar, msg, r2, chips, body, player);
+
+  root.append(bar, msg, repoBar, chips, r2, body, player);
   document.body.append(root);
 
   // ── 状态 ──
-  var tracks = [];
-  var cached = {};      // path -> true
-  var view = [];
+  var byRepo = {};        // rid -> [track]
+  var repoOrder = [];     // 有缓存的仓库
+  var repoTree = {};      // rid -> { proj, ref }
+  var active = null;      // 当前仓库 rid
+  var tracks = [];        // 当前仓库的全部曲目
+  var view = [];          // 筛选后
   var album = '';
   var cur = -1;
   var objURL = null;
@@ -180,6 +186,7 @@
   }
   function base(p) { return (p.split('/').pop() || p).replace(AUD, ''); }
   function dirOf(p) { return p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/')) : '.'; }
+  function repoOf(ridStr) { return repoTree[ridStr] || parseRepo(ridStr.replace('@', '@')) || null; }
 
   function modeLabel() {
     modeB.textContent = mode === 'seq' ? '⇕' : (mode === 'one' ? '↺' : '⇄');
@@ -188,17 +195,39 @@
   }
   function cycleMode() {
     mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
-    modeLabel();
-    paintMsg();
+    modeLabel(); paintMsg();
   }
   function paintMsg() {
+    if (!active) { msg.textContent = '还没有音乐。用 ☁ 按专辑缓存，或 ⤓ 整包导入'; return; }
+    var r = repoTree[active];
     var extra = view.length !== tracks.length ? '，筛出 ' + view.length : '';
-    msg.textContent = '共 ' + tracks.length + ' 首' + extra + ' · ' +
-      (mode === 'seq' ? '顺序' : mode === 'one' ? '单曲' : '随机') + ' · 关窗不停播';
+    msg.textContent = (r ? r.proj + '@' + r.ref : active) + ' · 共 ' + tracks.length + ' 首' + extra +
+      ' · ' + (mode === 'seq' ? '顺序' : mode === 'one' ? '单曲' : '随机') + ' · 关窗不停播';
+  }
+
+  function drawRepos() {
+    repoBar.innerHTML = '';
+    if (!repoOrder.length) { repoBar.style.display = 'none'; return; }
+    repoBar.style.display = 'flex';
+    repoOrder.forEach(function (id) {
+      var r = repoTree[id] || {};
+      var on = id === active;
+      var c = document.createElement('button');
+      c.textContent = (r.proj ? r.proj.split('/').pop() : id) + (r.ref ? '@' + r.ref : '');
+      c.title = id;
+      c.style.cssText = 'flex-shrink:0;height:28px;padding:0 11px;border:1px solid ' +
+        (on ? '#3a6df0' : '#2a2a32') + ';border-radius:999px;background:' +
+        (on ? 'rgba(58,109,240,.22)' : 'transparent') + ';color:' +
+        (on ? '#cfe0ff' : '#8a8a99') + ';font:12px/1 inherit;cursor:pointer;white-space:nowrap';
+      c.onclick = function () { switchRepo(id); };
+      repoBar.append(c);
+    });
   }
 
   function drawChips() {
     chips.innerHTML = '';
+    if (!tracks.length) { chips.style.display = 'none'; return; }
+    chips.style.display = 'flex';
     var counts = {};
     tracks.forEach(function (t) { var d = dirOf(t.path); counts[d] = (counts[d] || 0) + 1; });
     var list = [['', tracks.length]].concat(Object.keys(counts).map(function (k) { return [k, counts[k]]; }));
@@ -233,7 +262,7 @@
     view.slice(0, LIM).forEach(function (t, i) {
       var row = document.createElement('div');
       var on = (i === cur);
-      row.textContent = (i + 1) + '. ' + t.name + (cached[t.path] ? ' ·✓' : '');
+      row.textContent = (i + 1) + '. ' + t.name + (t.cached ? ' ·✓' : '');
       row.title = t.path;
       row.style.cssText = 'padding:10px 12px;border-radius:9px;cursor:pointer;font-size:13px;' +
         'color:' + (on ? '#fff' : '#999') + ';background:' + (on ? '#26262c' : 'transparent') +
@@ -249,28 +278,37 @@
     }
   }
 
+  function switchRepo(id) {
+    active = id;
+    album = '';
+    cur = -1;
+    tracks = byRepo[id] || [];
+    drawRepos(); drawChips(); applyFilter();
+    try { localStorage.setItem(AKEY, id); } catch (e) {}
+  }
+
   function playAt(i) {
     if (i < 0 || i >= view.length) return;
     cur = i;
     var t = view[i];
-    getOne('blob', t.path).then(function (b) {
+    var r = repoTree[active];
+    getOne('blob', bkey(active, t.path)).then(function (b) {
       if (objURL) { try { URL.revokeObjectURL(objURL); } catch (e) {} objURL = null; }
       if (b) {
         objURL = URL.createObjectURL(b);
         audio.src = objURL;
-      } else {
-        // 未缓存：直接流播（API raw 支持 Range，不写进 IndexedDB）
-        audio.src = rawURL(t.path);
-      }
+      } else if (r) {
+        audio.src = rawURL(r, t.path);     // 未缓存：直接流播
+      } else return;
       var pr = audio.play();
       if (pr && pr.catch) pr.catch(function () { msg.textContent = '被拦截：点一下 ▶ 手动播放'; });
       now.textContent = t.name + (b ? '' : ' · 流播');
-      paintMsg();
+      window.__fhNowTitle = now.textContent;
       drawList();
       try {
         if ('mediaSession' in navigator) {
           navigator.mediaSession.metadata = new MediaMetadata({
-            title: t.name, artist: dirOf(t.path).split('/').pop() || '', album: '本地音乐'
+            title: t.name, artist: dirOf(t.path).split('/').pop() || '', album: (r ? r.proj : '')
           });
         }
       } catch (e) {}
@@ -279,8 +317,7 @@
 
   function toggle() {
     if (!audio.src) { if (view.length) playAt(0); return; }
-    if (audio.paused) { audio.play(); }
-    else { audio.pause(); }
+    if (audio.paused) audio.play(); else audio.pause();
   }
   function step(d) {
     if (!view.length) return;
@@ -301,14 +338,12 @@
     timeEl.textContent = fmt(audio.currentTime) + ' / ' + fmt(d);
     if (d) seek.value = Math.round(audio.currentTime / d * 1000);
   });
-  audio.addEventListener('loadedmetadata', function () {
-    timeEl.textContent = '0:00 / ' + fmt(audio.duration);
-  });
+  audio.addEventListener('loadedmetadata', function () { timeEl.textContent = '0:00 / ' + fmt(audio.duration); });
   audio.addEventListener('play', function () { playB.textContent = '⏸'; });
   audio.addEventListener('pause', function () { playB.textContent = '▶'; });
   audio.addEventListener('ended', function () {
     if (mode === 'one') { try { audio.currentTime = 0; audio.play(); } catch (e) {} return; }
-    step(1);      // 连播关键：复用同一个 audio 元素，播放授权不丢
+    step(1);
   });
 
   seek.oninput = function () { if (audio.duration) audio.currentTime = seek.value / 1000 * audio.duration; };
@@ -320,55 +355,106 @@
   modeB.onclick = cycleMode;
   modeLabel();
 
-  // 关窗后重开：接上正在播的那首
   if (audio.src && !audio.paused) {
     playB.textContent = '⏸';
     now.textContent = window.__fhNowTitle || '播放中';
   }
 
-  // ── 导入 ──
+  // ── 读取缓存（含旧数据迁移）──
+  function refresh() {
+    return getAll('meta').then(function (arr) {
+      var def = parseRepo((function () { try { return localStorage.getItem(RKEY) || DEF; } catch (e) { return DEF; } })()) || parseRepo(DEF);
+      var defRid = rid(def);
+      var need = [];
+      var acc = {};
+      arr.forEach(function (m) {
+        var r = m.repo;
+        if (!r) {
+          // 老数据没有 repo 字段：归到默认仓库，并把 blob 搬到新键
+          r = defRid;
+          need.push(m.path);
+          repoTree[r] = def;
+        } else {
+          var parts = r.split('@');
+          repoTree[r] = parseRepo(parts[0] + '@' + (parts[1] || 'master')) || null;
+        }
+        var t = { path: m.path, name: m.name, size: m.size || 0, cached: true, repo: r };
+        (acc[r] = acc[r] || []).push(t);
+      });
+
+      // 迁移旧 blob 键
+      var chain = Promise.resolve();
+      need.forEach(function (p) {
+        chain = chain.then(function () {
+          return getOne('blob', p).then(function (b) {
+            if (!b) return;
+            return put('blob', b, bkey(defRid, p)).then(function () { return del('blob', p); });
+          });
+        });
+      });
+
+      return chain.then(function () {
+        byRepo = acc;
+        repoOrder = Object.keys(acc).sort(function (a, b) {
+          return (acc[b].length || 0) - (acc[a].length || 0);
+        });
+        repoOrder.forEach(function (id) {
+          if (!repoTree[id]) {
+            var parts = id.split('@');
+            repoTree[id] = parseRepo(parts[0] + '@' + (parts[1] || 'master'));
+          }
+        });
+        var want = null;
+        try { want = localStorage.getItem(AKEY); } catch (e) {}
+        if (want && byRepo[want]) active = want;
+        else if (repoOrder.length) active = repoOrder[0];
+        else active = null;
+        if (active) {
+          tracks = byRepo[active] || [];
+          drawRepos(); drawChips(); applyFilter();
+        } else {
+          drawRepos(); drawChips(); paintMsg();
+        }
+      });
+    }).catch(function (e) {
+      msg.textContent = '读取缓存失败：' + (e && e.message ? e.message : e);
+    });
+  }
+
+  // ── 导入：整包 ──
   function importPanel() {
     var d = document.createElement('div');
     d.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(8,8,10,.8);display:flex;align-items:center;justify-content:center;padding:16px';
     var box = document.createElement('div');
     box.style.cssText = 'width:min(520px,94vw);background:#1b1b20;border:1px solid #3a3a42;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px';
     var t = document.createElement('div');
-    t.textContent = '导入音乐仓库（整包）';
+    t.textContent = '整包导入';
     t.style.cssText = 'font-weight:700;color:#bbb';
     var hint = document.createElement('div');
-    hint.textContent = '一次请求拿 zip，比逐首拉省限额。整包会先存下来，下次不用重下。';
+    hint.textContent = '小仓库用这个：一次请求拿 zip 再解压。仓库和分支随便换，专辑分组照旧。';
     hint.style.cssText = 'font-size:11.5px;color:#666;line-height:1.6';
     var inp = document.createElement('input');
-    inp.placeholder = 'user/repo@master 或 GitLab 链接';
+    inp.placeholder = 'user/repo@分支 或 GitLab 链接';
     inp.style.cssText = 'padding:10px;border:1px solid #333;border-radius:9px;background:#101014;color:#ddd;font:12px/1.5 ui-monospace,monospace';
     try { inp.value = localStorage.getItem(RKEY) || DEF; } catch (e) { inp.value = DEF; }
     var st = document.createElement('div');
     st.style.cssText = 'font-size:12px;color:#777;min-height:18px;white-space:pre-wrap';
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:8px';
     var go = document.createElement('button');
     go.textContent = '下载并解压';
-    go.style.cssText = 'flex:1;height:40px;border:0;border-radius:10px;background:#3a6df0;color:#fff;font:13px/1 inherit;cursor:pointer';
-    var clr = document.createElement('button');
-    clr.textContent = '清空缓存';
-    clr.style.cssText = 'height:40px;padding:0 14px;border:1px solid #5a3030;border-radius:10px;background:transparent;color:#c98;font:13px/1 inherit;cursor:pointer';
-    row.append(go, clr);
-
-    clr.onclick = function () {
-      if (!confirm('清空已解压的音乐缓存？（不影响整包）')) return;
-      clearTracks().then(function () { tracks = []; drawChips(); applyFilter(); });
-    };
+    go.style.cssText = 'height:40px;border:0;border-radius:10px;background:#3a6df0;color:#fff;font:13px/1 inherit;cursor:pointer';
 
     go.onclick = function () {
       var r = parseRepo(inp.value);
-      if (!r) { st.textContent = '仓库写法看不懂'; return; }
+      if (!r) { st.textContent = '写法看不懂'; return; }
       try { localStorage.setItem(RKEY, inp.value.trim()); } catch (e) {}
+      var id = rid(r);
+      repoTree[id] = r;
       go.disabled = true;
-      var zipKey = 'zip:' + r.proj + '@' + r.ref;
+      var zipKey = 'zip:' + id;
       getOne('zip', zipKey).then(function (cached) {
-        if (cached) { st.textContent = '用已存整包（' + (cached.size / 1048576).toFixed(1) + ' MB），跳过下载'; return cached; }
+        if (cached) { st.textContent = '用已存整包 ' + (cached.size / 1048576).toFixed(1) + ' MB'; return cached; }
         st.textContent = '下载中 0%';
-        return downloadZip(archiveURL(r.proj, r.ref), function (p, mb) {
+        return downloadZip(archiveURL(r), function (p, mb) {
           st.textContent = '下载中 ' + Math.round(p * 100) + '%  ·  ' + mb.toFixed(1) + ' MB';
         }).then(function (blob) {
           st.textContent = '保存整包 ' + (blob.size / 1048576).toFixed(1) + ' MB';
@@ -376,48 +462,41 @@
         });
       }).then(function (blob) {
         st.textContent = '加载 JSZip…';
-        return loadJSZip().then(function (Z) {
-          st.textContent = '解压中…';
-          return Z.loadAsync(blob);
-        });
+        return loadJSZip().then(function (Z) { st.textContent = '解压中…'; return Z.loadAsync(blob); });
       }).then(function (zip) {
         var names = Object.keys(zip.files).filter(function (n) { return !zip.files[n].dir && AUD.test(n); });
         if (!names.length) throw new Error('压缩包里没有音频');
         names.sort(function (a, b) { return a.localeCompare(b, 'zh'); });
-        return clearTracks().then(function () {
-          var i = 0;
-          return names.reduce(function (p, n) {
-            return p.then(function () {
-              return zip.files[n].async('blob').then(function (b) {
-                // 去掉压缩包自动加的那层目录
-                var path = n.indexOf('/') >= 0 ? n.slice(n.indexOf('/') + 1) : n;
-                return put('blob', b, path).then(function () {
-                  return put('meta', { path: path, name: base(path), size: b.size }, path);
-                });
-              }).then(function () {
-                i++;
-                if (i % 10 === 0 || i === names.length) st.textContent = '解压写入 ' + i + '/' + names.length;
+        var i = 0;
+        return names.reduce(function (p, n) {
+          return p.then(function () {
+            return zip.files[n].async('blob').then(function (b) {
+              var path = n.indexOf('/') >= 0 ? n.slice(n.indexOf('/') + 1) : n;
+              return put('blob', b, bkey(id, path)).then(function () {
+                return put('meta', { repo: id, path: path, name: base(path), size: b.size }, bkey(id, path));
               });
+            }).then(function () {
+              i++;
+              if (i % 10 === 0 || i === names.length) st.textContent = '写入 ' + i + '/' + names.length;
             });
-          }, Promise.resolve());
-        }).then(function () { return names.length; });
+          });
+        }, Promise.resolve()).then(function () { return names.length; });
       }).then(function (n) {
-        st.textContent = '完成，' + n + ' 首';
+        st.textContent = '完成 ' + n + ' 首';
         d.remove();
-        refresh();
+        return refresh().then(function () { switchRepo(id); });
       }).catch(function (e) {
         st.textContent = '失败：' + (e && e.message ? e.message : e);
         go.disabled = false;
       });
     };
 
-    box.append(t, hint, inp, row, st);
+    box.append(t, hint, inp, go, st);
     d.append(box);
     d.onclick = function (e) { if (e.target === d) d.remove(); };
     document.body.append(d);
   }
 
-  // 带进度的下载（fetch 没有 progress，用 XHR）
   function downloadZip(url, onProgress) {
     return new Promise(function (res, rej) {
       var x = new XMLHttpRequest();
@@ -428,10 +507,7 @@
         if (e.lengthComputable) onProgress(e.loaded / e.total, e.loaded / 1048576);
         else onProgress(0, e.loaded / 1048576);
       };
-      x.onload = function () {
-        if (x.status >= 200 && x.status < 300) res(x.response);
-        else rej(new Error('HTTP ' + x.status));
-      };
+      x.onload = function () { x.status >= 200 && x.status < 300 ? res(x.response) : rej(new Error('HTTP ' + x.status)); };
       x.onerror = function () { rej(new Error('网络错误')); };
       x.ontimeout = function () { rej(new Error('超时')); };
       x.send();
@@ -449,7 +525,7 @@
     });
   }
 
-  // ── 按专辑缓存（大仓库用；请求量按专辑算，可断点续）──
+  // ── 导入：按专辑缓存（任意仓库/分支）──
   function albumPanel() {
     var d = document.createElement('div');
     d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(8,8,10,.82);display:flex;align-items:center;justify-content:center;padding:16px';
@@ -459,12 +535,12 @@
     hd.textContent = '按专辑缓存';
     hd.style.cssText = 'padding:12px 14px;font-weight:700;color:#bbb;border-bottom:1px solid #2c2c34';
     var tips = document.createElement('div');
-    tips.textContent = '这个仓库约 3.8 GB，别整包解压。选专辑只下它那几十首，下过的会自动跳过。';
+    tips.textContent = '大仓库用这个：只下选中专辑，已下过的自动跳过，可随时停。仓库和分支随便换。';
     tips.style.cssText = 'padding:8px 14px;font-size:11.5px;color:#777;line-height:1.6';
     var rw = document.createElement('div');
     rw.style.cssText = 'display:flex;gap:6px;padding:0 14px 8px';
     var ri = document.createElement('input');
-    ri.placeholder = 'user/repo@master';
+    ri.placeholder = 'user/repo@分支 或 GitLab 链接';
     ri.style.cssText = 'flex:1;min-width:0;height:34px;padding:0 10px;border:1px solid #333;border-radius:9px;background:#101014;color:#ddd;font:12px/1 ui-monospace,monospace';
     try { ri.value = localStorage.getItem(RKEY) || DEF; } catch (e) { ri.value = DEF; }
     var rgo = document.createElement('button');
@@ -485,12 +561,11 @@
     closeB.style.cssText = 'height:38px;padding:0 18px;border:0;border-radius:9px;background:#2a2a32;color:#bbb;font:13px/1 inherit;cursor:pointer';
     ft.append(stopB, closeB);
 
-    var tree = null;
-    var stop = false;
+    var tree = null, stop = false, curRepo = null, cachedSet = {};
 
     function rows() {
       listBox.innerHTML = '';
-      if (!tree) return;
+      if (!tree || !curRepo) return;
       var map = {};
       tree.forEach(function (p) {
         var a = p.indexOf('/') >= 0 ? p.slice(0, p.lastIndexOf('/')) : '.';
@@ -498,7 +573,7 @@
       });
       Object.keys(map).sort(function (a, b) { return map[b].length - map[a].length; }).forEach(function (a) {
         var arr = map[a];
-        var done = arr.filter(function (p) { return cached[p]; }).length;
+        var done = arr.filter(function (p) { return cachedSet[p]; }).length;
         var row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;background:#17171c;border:1px solid #26262c;margin:6px 0';
         var nm = document.createElement('div');
@@ -507,7 +582,9 @@
         var b = document.createElement('button');
         b.textContent = done === arr.length ? '已全下' : '缓存';
         b.disabled = done === arr.length;
-        b.style.cssText = 'height:32px;padding:0 14px;border:0;border-radius:8px;background:' + (done === arr.length ? '#2a2a32' : '#3a6df0') + ';color:' + (done === arr.length ? '#777' : '#fff') + ';font:12px/1 inherit;cursor:pointer';
+        b.style.cssText = 'height:32px;padding:0 14px;border:0;border-radius:8px;background:' +
+          (done === arr.length ? '#2a2a32' : '#3a6df0') + ';color:' + (done === arr.length ? '#777' : '#fff') +
+          ';font:12px/1 inherit;cursor:pointer';
         b.onclick = function () { runQueue(arr, b); };
         row.append(nm, b);
         listBox.append(row);
@@ -515,30 +592,31 @@
     }
 
     function runQueue(arr, btn) {
-      var todo = arr.filter(function (p) { return !cached[p]; });
+      var todo = arr.filter(function (p) { return !cachedSet[p]; });
       if (!todo.length) return;
       stop = false;
       btn.disabled = true;
       var i = 0, fail = 0;
-      st.textContent = '开始：' + todo.length + ' 首';
+      st.textContent = '开始 ' + todo.length + ' 首';
       function nextOne() {
         if (stop || i >= todo.length) {
           st.textContent = (stop ? '已停止 ' : '完成 ') + i + '/' + todo.length + (fail ? '，失败 ' + fail : '');
           btn.disabled = false;
           rows();
+          refresh().then(function () { switchRepo(rid(curRepo)); });
           return;
         }
         var path = todo[i];
-        st.textContent = '下载 ' + (i + 1) + '/' + todo.length + '  ·  ' + base(path);
-        fetchBlob(rawURL(path)).then(function (b) {
+        st.textContent = '下载 ' + (i + 1) + '/' + todo.length + ' · ' + base(path);
+        fetchBlob(rawURL(curRepo, path)).then(function (b) {
           if (!b) throw new Error('empty');
-          return put('blob', b, path).then(function () {
-            return put('meta', { path: path, name: base(path), size: b.size }, path);
+          return put('blob', b, bkey(rid(curRepo), path)).then(function () {
+            return put('meta', { repo: rid(curRepo), path: path, name: base(path), size: b.size }, bkey(rid(curRepo), path));
           });
         }).then(function () {
-          cached[path] = true;
+          cachedSet[path] = true;
           i++;
-          setTimeout(nextOne, 120);      // 间隔一点，避开 API 限流
+          setTimeout(nextOne, 120);
         }).catch(function () {
           fail++; i++;
           setTimeout(nextOne, 400);
@@ -563,37 +641,40 @@
     rgo.onclick = function () {
       var r = parseRepo(ri.value);
       if (!r) { st.textContent = '写法看不懂'; return; }
+      curRepo = r;
+      repoTree[rid(r)] = r;
       try { localStorage.setItem(RKEY, ri.value.trim()); } catch (e) {}
-      REPO = r;
       st.textContent = '读取列表…';
+      tree = null; cachedSet = {};
       listBox.innerHTML = '';
-      var files = [], page = 1, pages = 1;
-      function step() {
-        fetch('https://gitlab.com/api/v4/projects/' + enc(r.proj) + '/repository/tree?ref=' + enc(r.ref) +
-          '&recursive=true&per_page=100&page=' + page, { credentials: 'omit' })
-          .then(function (resp) {
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            var tp = parseInt(resp.headers.get('x-total-pages') || '1', 10);
-            if (tp > pages) pages = tp;
-            return resp.json();
-          })
-          .then(function (arr) {
-            if (!Array.isArray(arr)) throw new Error('格式异常');
-            arr.forEach(function (x) { if (x.type === 'blob' && AUD.test(x.path)) files.push(x.path); });
-            st.textContent = '第 ' + page + '/' + pages + ' 页 · ' + files.length + ' 首';
-            if (arr.length && page < pages && page < 40) { page++; return step(); }
-            files.sort(function (a, b) { return a.localeCompare(b, 'zh'); });
-            tree = files;
-            st.textContent = '共 ' + files.length + ' 首';
-            rows();
-          })
-          .catch(function (e) { st.textContent = '失败：' + e.message; });
-      }
-      step();
+      // 已缓存状态
+      getAll('meta').then(function (arr) {
+        arr.forEach(function (m) { if (m.repo === rid(r)) cachedSet[m.path] = true; });
+        var files = [], page = 1, pages = 1;
+        function step() {
+          fetch('https://gitlab.com/api/v4/projects/' + enc(r.proj) + '/repository/tree?ref=' + enc(r.ref) +
+            '&recursive=true&per_page=100&page=' + page, { credentials: 'omit' })
+            .then(function (resp) {
+              if (!resp.ok) throw new Error('HTTP ' + resp.status);
+              var tp = parseInt(resp.headers.get('x-total-pages') || '1', 10);
+              if (tp > pages) pages = tp;
+              return resp.json();
+            })
+            .then(function (a2) {
+              if (!Array.isArray(a2)) throw new Error('格式异常');
+              a2.forEach(function (x) { if (x.type === 'blob' && AUD.test(x.path)) files.push(x.path); });
+              st.textContent = '第 ' + page + '/' + pages + ' 页 · ' + files.length + ' 首';
+              if (a2.length && page < pages && page < 40) { page++; return step(); }
+              files.sort(function (a, b) { return a.localeCompare(b, 'zh'); });
+              tree = files;
+              st.textContent = r.proj + '@' + r.ref + ' · 共 ' + files.length + ' 首';
+              rows();
+            })
+            .catch(function (e) { st.textContent = '失败：' + e.message; });
+        }
+        step();
+      });
     };
-
-    var cur = parseRepo((function () { try { return localStorage.getItem(RKEY) || DEF; } catch (e) { return DEF; } })());
-    if (cur) ri.value = localStorage.getItem(RKEY) || DEF;
 
     stopB.onclick = function () { stop = true; st.textContent = '停止中…'; };
     closeB.onclick = function () { stop = true; d.remove(); };
@@ -601,18 +682,6 @@
     d.append(box);
     d.onclick = function (e) { if (e.target === d) { stop = true; d.remove(); } };
     document.body.append(d);
-  }
-
-  function refresh() {
-    getAll('meta').then(function (arr) {
-      cached = {};
-      tracks = arr.map(function (m) {
-        cached[m.path] = true;
-        return { path: m.path, name: m.name, size: m.size || 0 };
-      }).sort(function (a, b) { return a.path.localeCompare(b.path, 'zh'); });
-      drawChips();
-      applyFilter();
-    });
   }
 
   refresh();
