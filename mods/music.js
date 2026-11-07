@@ -110,7 +110,11 @@
     return b;
   }
   var impBtn = ib('⤓', null, '导入');
-  var close = ib('✕', function () { root.remove(); });
+  var close = ib('✕', function () {
+    try { audio.pause(); } catch (e) {}
+    if (objURL) { try { URL.revokeObjectURL(objURL); } catch (e) {} objURL = null; }
+    root.remove();
+  });
   bar.append(title, impBtn, close);
 
   var body = document.createElement('div');
@@ -228,6 +232,7 @@
 
   // ── 列表与播放 ──
   var tracks = [];
+  var objURL = null;
   var idx = -1;
   var audio = new Audio();
   audio.preload = 'metadata';
@@ -263,7 +268,9 @@
     var t = tracks[i];
     getOne('blob', t.path).then(function (b) {
       if (!b) return alert('缓存里找不到这个文件');
-      audio.src = URL.createObjectURL(b);
+      if (objURL) { try { URL.revokeObjectURL(objURL); } catch (e) {} }
+      objURL = URL.createObjectURL(b);
+      audio.src = objURL;
       audio.play().catch(function () {});
       now.textContent = t.name;
       play.textContent = '⏸';

@@ -15,8 +15,13 @@
       var list = loadRank();
       var me = null;
       for (var i = 0; i < list.length; i++) if (list[i].name === state.name) { me = list[i]; break; }
-      if (me) me.earned = state.earned;
-      else if (state.name) list.push({ name: state.name, earned: state.earned, correct: 0, rounds: 0 });
+      if (me) {
+        me.earned = state.earned;
+        if (typeof me.correct !== 'number') me.correct = 0;
+        if (typeof me.rounds !== 'number') me.rounds = 0;
+      } else if (state.name) {
+        list.push({ name: state.name, earned: state.earned, correct: 0, rounds: 0 });
+      }
       saveRank(list);
     }
   } catch (e) {}

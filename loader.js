@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.1/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.2/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.1/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.2/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -80,45 +80,102 @@
     '便签': []
   };
 
+  // ── 样式：只注入一次，以后改外观只改这里 ──
+  if (!document.getElementById('__fhcss')) {
+    var stEl = document.createElement('style');
+    stEl.id = '__fhcss';
+    stEl.textContent = [
+      '#__fh{position:fixed;right:14px;bottom:14px;z-index:2147483647;display:flex;',
+      'font:13px/1.45 -apple-system,"PingFang SC",sans-serif;color:#e8e8f0;',
+      'user-select:none;-webkit-user-select:none}',
+      '#__fh .fh-panel{display:flex;flex-direction:column;width:min(318px,88vw);max-height:86vh;',
+      'background:linear-gradient(180deg,rgba(32,32,39,.97),rgba(20,20,26,.98));',
+      'border:1px solid rgba(255,255,255,.1);border-radius:16px;overflow:hidden;',
+      'box-shadow:0 18px 48px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.07);',
+      'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}',
+      '#__fh .fh-head{display:flex;align-items:center;gap:7px;padding:9px 10px 8px;',
+      'cursor:move;touch-action:none;flex-shrink:0}',
+      '#__fh .fh-title{flex:1;min-width:0;font:700 11px/1.2 inherit;color:#898998;',
+      'letter-spacing:.9px;text-transform:uppercase;overflow:hidden;',
+      'text-overflow:ellipsis;white-space:nowrap}',
+      '#__fh .fh-ico{width:28px;height:26px;flex-shrink:0;border:0;border-radius:8px;',
+      'background:transparent;color:#898998;font:14px/1 inherit;cursor:pointer;',
+      'padding:0;display:grid;place-items:center}',
+      '#__fh .fh-ico:active{background:rgba(255,255,255,.16);color:#fff}',
+      '#__fh .fh-tabs{display:flex;gap:4px;padding:0 10px 9px;flex-shrink:0}',
+      '#__fh .fh-tab{flex:1;height:30px;border:0;border-radius:9px;',
+      'background:rgba(255,255,255,.05);color:#8a8a99;font:12px/1 inherit;cursor:pointer}',
+      '#__fh .fh-tab.on{background:linear-gradient(180deg,#4d7ef8,#3a62d6);color:#fff;',
+      'font-weight:600;box-shadow:0 3px 10px rgba(58,98,214,.42)}',
+      '#__fh .fh-content{flex:1;min-height:0;overflow:auto;padding:0 10px 10px;',
+      'overscroll-behavior:contain}',
+      '#__fh .fh-content::-webkit-scrollbar{width:6px}',
+      '#__fh .fh-content::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:9px}',
+      '#__fh .fh-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}',
+      '#__fh .fh-mod{padding:10px 9px;border:1px solid rgba(255,255,255,.08);border-radius:10px;',
+      'background:rgba(255,255,255,.05);color:#dcdce6;cursor:pointer;font:12.5px/1.2 inherit;',
+      'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}',
+      '#__fh .fh-mod:active{background:rgba(255,255,255,.16);transform:scale(.97)}',
+      '#__fh .fh-mod[disabled]{opacity:.5;cursor:progress;transform:none}',
+      '#__fh .fh-ta{width:100%;min-height:210px;max-height:52vh;padding:10px;',
+      'border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(0,0,0,.34);',
+      'color:#d8d8e0;font:12px/1.7 inherit;outline:none;resize:vertical}',
+      '#__fh .fh-ta:focus{border-color:rgba(77,126,248,.7);box-shadow:0 0 0 3px rgba(77,126,248,.15)}',
+      '#__fh .fh-bar{display:flex;gap:6px;align-items:center;margin-top:6px}',
+      '#__fh .fh-stat{flex:1;min-width:0;font-size:11px;color:#6b6b78;overflow:hidden;',
+      'text-overflow:ellipsis;white-space:nowrap}',
+      '#__fh .fh-btn{height:30px;padding:0 11px;border:1px solid rgba(255,255,255,.11);',
+      'border-radius:8px;background:rgba(255,255,255,.06);color:#a6a6b4;',
+      'font:12px/1 inherit;cursor:pointer}',
+      '#__fh .fh-btn:active{background:rgba(255,255,255,.16);color:#fff}',
+      '#__fh .fh-cat{width:24px;height:24px;flex-shrink:0;border:0;border-radius:50%;',
+      'background:transparent;font:15px/1 inherit;cursor:pointer;padding:0;',
+      'display:grid;place-items:center}',
+      '#__fh.is-mini .fh-panel{width:52px;border-radius:50%;border-color:rgba(255,255,255,.18);',
+      'box-shadow:0 10px 26px rgba(0,0,0,.5)}',
+      '#__fh.is-mini .fh-head{padding:9px;justify-content:center;cursor:pointer}',
+      '#__fh.is-mini .fh-title,#__fh.is-mini .fh-tabs,#__fh.is-mini .fh-content,#__fh.is-mini .fh-ico{display:none}',
+      '#__fh.is-mini .fh-cat{width:34px;height:34px;font-size:22px}'
+    ].join('');
+    (document.head || document.documentElement).appendChild(stEl);
+  }
+
   var root = document.createElement('div');
   root.id = '__fh';
-  root.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:2147483647;font:13px/1.45 -apple-system,"PingFang SC",sans-serif;color:#eee;user-select:none;max-height:86vh;display:flex';
 
   var panel = document.createElement('div');
-  panel.style.cssText = 'display:flex;flex-direction:column;width:min(300px,86vw);max-height:86vh;background:rgba(24,24,28,.96);border:1px solid #3a3a42;border-radius:14px;box-shadow:0 12px 34px rgba(0,0,0,.45);backdrop-filter:blur(10px);overflow:hidden';
+  panel.className = 'fh-panel';
 
   // 标题栏
   var head = document.createElement('div');
-  head.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px 10px;cursor:move;touch-action:none;flex-shrink:0';
+  head.className = 'fh-head';
   var cat = document.createElement('button');
+  cat.className = 'fh-cat';
   cat.textContent = '🐱';
-  cat.title = '调试';
-  cat.style.cssText = 'width:26px;height:24px;border:0;border-radius:7px;background:transparent;font:15px/1 inherit;cursor:pointer;padding:0';
+  cat.title = '菜单';
   var title = document.createElement('div');
+  title.className = 'fh-title';
   title.textContent = 'fuulea_hack';
-  title.style.cssText = 'flex:1;font:700 12px/1.2 inherit;color:#9aa;letter-spacing:.5px';
   function icon(t, tip) {
     var b = document.createElement('button');
+    b.className = 'fh-ico';
     b.textContent = t;
     b.title = tip || '';
-    b.style.cssText = 'width:26px;height:24px;border:0;border-radius:7px;background:transparent;color:#9aa;font:14px/1 inherit;cursor:pointer;padding:0';
-    b.onmouseenter = function () { b.style.background = '#33333b'; };
-    b.onmouseleave = function () { b.style.background = 'transparent'; };
     return b;
   }
-  var minBtn = icon('−', '小窗');
+  var minBtn = icon('−', '收起成小圆点');
   var closeBtn = icon('✕', '关闭');
   closeBtn.onclick = function () { root.remove(); };
   head.append(cat, title, minBtn, closeBtn);
 
   // 二级标签
   var tabs = document.createElement('div');
-  tabs.style.cssText = 'display:flex;gap:4px;padding:0 10px 8px;flex-shrink:0';
+  tabs.className = 'fh-tabs';
   var tabBtns = {};
   Object.keys(GROUPS).forEach(function (name) {
     var b = document.createElement('button');
+    b.className = 'fh-tab';
     b.textContent = name;
-    b.style.cssText = 'flex:1;height:30px;border:1px solid #33333b;border-radius:8px;background:transparent;color:#8a8;font:12px/1 inherit;cursor:pointer';
     b.onclick = function () { show(name); };
     tabBtns[name] = b;
     tabs.append(b);
@@ -126,27 +183,25 @@
 
   // 内容区
   var content = document.createElement('div');
-  content.style.cssText = 'flex:1;min-height:0;overflow:auto;padding:0 10px 10px';
+  content.className = 'fh-content';
 
   function show(name) {
     Object.keys(tabBtns).forEach(function (k) {
-      tabBtns[k].style.background = k === name ? '#2e2e37' : 'transparent';
-      tabBtns[k].style.color = k === name ? '#ddd' : '#8a8';
+      if (k === name) tabBtns[k].classList.add('on');
+      else tabBtns[k].classList.remove('on');
     });
     content.innerHTML = '';
 
     if (name === '便签') return notes();
 
     var grid = document.createElement('div');
-    grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px';
+    grid.className = 'fh-grid';
     GROUPS[name].forEach(function (m) {
       var b = document.createElement('button');
+      b.className = 'fh-mod';
       b.textContent = m[0];
-      b.style.cssText = 'padding:9px 8px;border:1px solid #3a3a42;border-radius:9px;background:#26262c;color:#eee;cursor:pointer;font:inherit;white-space:nowrap;text-align:left';
-      b.onmouseenter = function () { b.style.background = '#33333b'; };
-      b.onmouseleave = function () { b.style.background = '#26262c'; };
       b.onclick = function () {
-        b.disabled = true; b.style.opacity = .5;
+        b.disabled = true;
         loadMod(m[1], b);
       };
       grid.append(b);
@@ -161,27 +216,35 @@
     wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;height:100%';
 
     var ta = document.createElement('textarea');
+    ta.className = 'fh-ta';
     ta.placeholder = '随手记点什么，自动保存…';
     ta.spellcheck = false;
-    ta.style.cssText = 'width:100%;box-sizing:border-box;min-height:210px;max-height:52vh;padding:10px;border:1px solid #33333b;border-radius:10px;background:#141418;color:#ddd;font:12px/1.7 -apple-system,"PingFang SC",sans-serif;outline:none;resize:vertical';
     try { ta.value = localStorage.getItem(KEY) || ''; } catch (e) {}
 
     var bar = document.createElement('div');
-    bar.style.cssText = 'display:flex;gap:6px;align-items:center';
+    bar.className = 'fh-bar';
     var stat = document.createElement('div');
-    stat.style.cssText = 'flex:1;font-size:11px;color:#666';
+    stat.className = 'fh-stat';
     var copy = document.createElement('button');
+    copy.className = 'fh-btn';
     copy.textContent = '复制';
-    copy.style.cssText = 'height:30px;padding:0 10px;border:1px solid #3a3a42;border-radius:8px;background:#222228;color:#bbb;font:12px/1 inherit;cursor:pointer';
     copy.onclick = function () {
-      navigator.clipboard && navigator.clipboard.writeText(ta.value).then(function () {
+      var txt = ta.value;
+      function ok() {
         copy.textContent = '已复制';
         setTimeout(function () { copy.textContent = '复制'; }, 1200);
-      });
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(ok, function () { fallback(); });
+      } else fallback();
+      function fallback() {
+        ta.select();
+        try { document.execCommand('copy'); ok(); } catch (e) {}
+      }
     };
     var clr = document.createElement('button');
+    clr.className = 'fh-btn';
     clr.textContent = '清空';
-    clr.style.cssText = copy.style.cssText;
     clr.onclick = function () {
       if (!confirm('清空便签？')) return;
       ta.value = '';
@@ -210,11 +273,12 @@
   document.body.append(root);
   show('学习');
 
-  // 拖动
+  // 拖动（小窗态不拖）
   (function () {
     var sx = 0, sy = 0, ox = 0, oy = 0, on = false;
     head.addEventListener('pointerdown', function (e) {
       if (e.target.tagName === 'BUTTON') return;
+      if (root.classList.contains('is-mini')) return;
       var r = root.getBoundingClientRect();
       root.style.left = r.left + 'px'; root.style.top = r.top + 'px';
       root.style.right = 'auto'; root.style.bottom = 'auto';
@@ -234,26 +298,20 @@
   var mini = false;
   minBtn.onclick = function () {
     mini = !mini;
-    tabs.style.display = mini ? 'none' : 'flex';
-    content.style.display = mini ? 'none' : 'block';
-    title.style.display = mini ? 'none' : 'block';
-    minBtn.style.display = mini ? 'none' : 'block';
-    closeBtn.style.display = mini ? 'none' : 'block';
-    panel.style.borderRadius = mini ? '50%' : '14px';
-    panel.style.width = mini ? 'auto' : 'min(300px,86vw)';
-    head.style.padding = mini ? '4px' : '8px 10px';
-    head.style.cursor = mini ? 'pointer' : 'move';
-    cat.style.fontSize = mini ? '20px' : '15px';
-    cat.style.width = mini ? '38px' : '26px';
-    cat.style.height = mini ? '38px' : '24px';
+    root.classList.toggle('is-mini', mini);
     if (mini) {
       root.style.left = 'auto'; root.style.top = 'auto';
       root.style.right = '14px'; root.style.bottom = '14px';
-      head.onclick = function (e) { if (e.target === head || e.target === cat) minBtn.onclick(); };
-    } else {
-      head.onclick = null;
     }
   };
+
+  // 小窗态下点猫头展开
+  head.addEventListener('click', function (e) {
+    if (mini && (e.target === head || e.target === cat || e.target === title)) {
+      minBtn.onclick();
+      e.stopPropagation();
+    }
+  });
 
   cat.onclick = function (e) {
     e.stopPropagation();
@@ -312,6 +370,45 @@
         });
       });
     }).observe(document.body, { childList: true });
+  })();
+
+
+  // ── 排行榜渲染加固：原版用 innerHTML 拼名字，改名会串标签 ──
+  (function () {
+    if (window.__fhRankPatched) return;
+    if (typeof window.renderRank !== 'function') return;
+    if (typeof window.loadRank !== 'function') return;
+    window.__fhRankPatched = 1;
+    window.renderRank = function () {
+      var list = loadRank().slice().sort(function (a, b) { return b.earned - a.earned; });
+      var box = document.getElementById('rankList');
+      var info = document.getElementById('rankInfo');
+      if (info) info.textContent = '共 ' + list.length + ' 位同学 · 按累计积分排名（记录保存在本机浏览器）';
+      if (!box) return;
+      box.innerHTML = '';
+      if (!list.length) {
+        box.innerHTML = '<div class="mini">还没有记录，快去答题吧！</div>';
+        return;
+      }
+      list.slice(0, 50).forEach(function (r, i) {
+        var d = document.createElement('div');
+        d.className = 'rankrow' + (r.name === state.name ? ' me' : '');
+        var rk = document.createElement('span');
+        rk.className = 'rk';
+        rk.textContent = i < 3 ? ['🥇', '🥈', '🥉'][i] : String(i + 1);
+        var nm = document.createElement('span');
+        nm.className = 'nm';
+        nm.textContent = r.name + (r.name === state.name ? '（我）' : '');
+        var mi = document.createElement('span');
+        mi.className = 'mini';
+        mi.textContent = (r.rounds || 0) + '组 · 对' + (r.correct || 0) + '题';
+        var pt = document.createElement('span');
+        pt.className = 'pt';
+        pt.textContent = r.earned + '分';
+        d.append(rk, nm, mi, pt);
+        box.append(d);
+      });
+    };
   })();
 
   function debugMenu() {
