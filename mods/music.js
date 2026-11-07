@@ -150,18 +150,38 @@
   var modeB = ib('⇕', cycleMode, '播放模式');
   line1.append(now, prevB, playB, nextB, modeB);
 
+  // 进度条：两端带时间
+  var seekRow = document.createElement('div');
+  seekRow.style.cssText = 'display:flex;align-items:center;gap:7px;font:11px/1 ui-monospace,Menlo,monospace;color:#777';
+  var tCur = document.createElement('span');
+  tCur.textContent = '0:00';
+  tCur.style.cssText = 'min-width:34px;text-align:right';
   var seek = document.createElement('input');
   seek.type = 'range'; seek.min = 0; seek.max = 1000; seek.value = 0;
-  seek.style.cssText = 'width:100%;accent-color:#3a6df0';
-  var line2 = document.createElement('div');
-  line2.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:11px;color:#666';
-  var timeEl = document.createElement('span');
-  timeEl.textContent = '0:00 / 0:00';
+  seek.title = '播放进度';
+  seek.style.cssText = 'flex:1;min-width:0;accent-color:#3a6df0';
+  var tTot = document.createElement('span');
+  tTot.textContent = '0:00';
+  tTot.style.cssText = 'min-width:34px';
+  seekRow.append(tCur, seek, tTot);
+
+  // 音量条：带喇叭
+  var volRow = document.createElement('div');
+  volRow.style.cssText = 'display:flex;align-items:center;gap:7px';
+  var muteB = document.createElement('button');
+  muteB.textContent = '🔊';
+  muteB.title = '静音 / 取消静音';
+  muteB.style.cssText = 'width:30px;height:26px;border:0;border-radius:7px;background:transparent;color:#888;font-size:14px;cursor:pointer;padding:0';
   var vol = document.createElement('input');
   vol.type = 'range'; vol.min = 0; vol.max = 100; vol.value = 100;
-  vol.style.cssText = 'flex:1;accent-color:#555';
-  line2.append(timeEl, vol);
-  player.append(line1, seek, line2);
+  vol.title = '音量';
+  vol.style.cssText = 'flex:1;min-width:0;accent-color:#555';
+  var volPct = document.createElement('span');
+  volPct.textContent = '100%';
+  volPct.style.cssText = 'min-width:38px;text-align:right;font:11px/1 ui-monospace,Menlo,monospace;color:#666';
+  volRow.append(muteB, vol, volPct);
+
+  player.append(line1, seekRow, volRow);
 
   root.append(bar, msg, repoBar, chips, r2, body, player);
   document.body.append(root);
@@ -335,10 +355,14 @@
 
   audio.addEventListener('timeupdate', function () {
     var d = audio.duration || 0;
-    timeEl.textContent = fmt(audio.currentTime) + ' / ' + fmt(d);
+    tCur.textContent = fmt(audio.currentTime);
+    tTot.textContent = fmt(d);
     if (d) seek.value = Math.round(audio.currentTime / d * 1000);
   });
-  audio.addEventListener('loadedmetadata', function () { timeEl.textContent = '0:00 / ' + fmt(audio.duration); });
+  audio.addEventListener('loadedmetadata', function () {
+    tCur.textContent = '0:00';
+    tTot.textContent = fmt(audio.duration);
+  });
   audio.addEventListener('play', function () { playB.textContent = '⏸'; });
   audio.addEventListener('pause', function () { playB.textContent = '▶'; });
   audio.addEventListener('ended', function () {
@@ -347,7 +371,17 @@
   });
 
   seek.oninput = function () { if (audio.duration) audio.currentTime = seek.value / 1000 * audio.duration; };
-  vol.oninput = function () { audio.volume = vol.value / 100; };
+  vol.oninput = function () {
+    audio.volume = vol.value / 100;
+    audio.muted = false;
+    volPct.textContent = vol.value + '%';
+    muteB.textContent = vol.value === 0 ? '\U0001F507' : '\U0001F50A';
+  };
+  muteB.onclick = function () {
+    audio.muted = !audio.muted;
+    muteB.textContent = audio.muted ? '\U0001F507' : '\U0001F50A';
+    muteB.style.color = audio.muted ? '#d66' : '#888';
+  };
   qIn.oninput = function () { applyFilter(); };
   playB.onclick = toggle;
   prevB.onclick = function () { step(-1); };
@@ -359,6 +393,16 @@
     playB.textContent = '⏸';
     now.textContent = window.__fhNowTitle || '播放中';
   }
+
+  // 首次打开就是浮动窗口（外壳会把 ◱ 插进标题栏，等它到位再点）
+  setTimeout(function () {
+    if (root.dataset.fhFloat === '1') return;
+    var mb = null;
+    [].forEach.call(root.querySelectorAll('button'), function (b) {
+      if (b.title === '小窗 / 全屏') mb = b;
+    });
+    if (mb) mb.click();
+  }, 90);
 
   // ── 读取缓存（含旧数据迁移）──
   function refresh() {
