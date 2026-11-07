@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.5/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.6/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.5/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.6/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -222,6 +222,11 @@
     ta.className = 'fh-ta';
     ta.placeholder = '随手记点什么，自动保存…';
     ta.spellcheck = false;
+    // 触屏上原生 resize 手柄不可用：关掉它，改自绘手柄
+    ta.style.resize = 'none';
+    ta.style.flex = '1';
+    ta.style.minHeight = '96px';
+    try { var h0 = localStorage.getItem('fh:note:h'); if (h0) ta.style.height = h0 + 'px'; } catch (e) {}
     try { ta.value = localStorage.getItem(KEY) || ''; } catch (e) {}
 
     var bar = document.createElement('div');
@@ -255,6 +260,36 @@
       stat.textContent = '已清空';
     };
 
+    // 自绘纵向拖拽条：上下拖改高度
+    var dragBar = document.createElement('div');
+    dragBar.style.cssText = 'flex:0 0 14px;height:14px;margin:-3px 0 -1px;cursor:ns-resize;' +
+      'touch-action:none;display:grid;place-items:center';
+    var dragDot = document.createElement('div');
+    dragDot.style.cssText = 'width:48px;height:4px;border-radius:3px;background:rgba(255,255,255,.22)';
+    dragBar.append(dragDot);
+    (function () {
+      var g = null;
+      dragBar.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        var r = ta.getBoundingClientRect();
+        g = { y: e.clientY, h: r.height };
+        ta.style.flex = 'none';
+        ta.style.height = r.height + 'px';
+        try { dragBar.setPointerCapture(e.pointerId); } catch (err) {}
+      });
+      dragBar.addEventListener('pointermove', function (e) {
+        if (!g) return;
+        var nh = Math.max(96, Math.min(g.h + e.clientY - g.y, 4000));
+        ta.style.height = nh + 'px';
+      });
+      dragBar.addEventListener('pointerup', function () {
+        if (!g) return;
+        g = null;
+        try { localStorage.setItem('fh:note:h', String(Math.round(ta.getBoundingClientRect().height))); } catch (e) {}
+      });
+      dragBar.addEventListener('pointercancel', function () { g = null; });
+    })();
+
     var t = null;
     ta.oninput = function () {
       clearTimeout(t);
@@ -267,7 +302,7 @@
 
     stat.textContent = ta.value ? ('已保存 · ' + ta.value.length + ' 字') : '';
     bar.append(stat, copy, clr);
-    wrap.append(ta, bar);
+    wrap.append(ta, dragBar, bar);
     content.append(wrap);
   }
 
