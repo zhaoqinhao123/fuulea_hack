@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.3/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.4/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.3/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.4/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -303,11 +303,12 @@
   show('学习');
 
   // 拖动（小窗态不拖）
+  var dragMoved = false;
   (function () {
     var sx = 0, sy = 0, ox = 0, oy = 0, on = false;
     head.addEventListener('pointerdown', function (e) {
       if (e.target.tagName === 'BUTTON') return;
-      if (root.classList.contains('is-mini')) return;
+      dragMoved = false;
       var r = root.getBoundingClientRect();
       root.style.left = r.left + 'px'; root.style.top = r.top + 'px';
       root.style.right = 'auto'; root.style.bottom = 'auto';
@@ -316,6 +317,7 @@
     });
     head.addEventListener('pointermove', function (e) {
       if (!on) return;
+      if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 6) dragMoved = true;
       root.style.left = Math.max(2, Math.min(ox + e.clientX - sx, innerWidth - 60)) + 'px';
       root.style.top = Math.max(2, Math.min(oy + e.clientY - sy, innerHeight - 40)) + 'px';
     });
@@ -325,17 +327,40 @@
 
   // 小窗
   var mini = false;
+  var savedW = '', savedH = '', savedMax = '', savedPos = null;
   minBtn.onclick = function () {
     mini = !mini;
     root.classList.toggle('is-mini', mini);
     if (mini) {
+      // 自定义尺寸会让 CSS 的 88px 失效，先收起来
+      savedW = panel.style.width;
+      savedH = panel.style.height;
+      savedMax = panel.style.maxHeight;
+      panel.style.width = '';
+      panel.style.height = '';
+      panel.style.maxHeight = '';
+      savedPos = {
+        left: root.style.left, top: root.style.top,
+        right: root.style.right, bottom: root.style.bottom
+      };
       root.style.left = 'auto'; root.style.top = 'auto';
       root.style.right = '14px'; root.style.bottom = '14px';
+      pGrip.style.display = 'none';
+    } else {
+      panel.style.width = savedW;
+      panel.style.height = savedH;
+      panel.style.maxHeight = savedMax;
+      pGrip.style.display = 'block';
+      if (savedPos) {
+        root.style.left = savedPos.left; root.style.top = savedPos.top;
+        root.style.right = savedPos.right; root.style.bottom = savedPos.bottom;
+      }
     }
   };
 
   // 小窗态下点猫头展开
   head.addEventListener('click', function (e) {
+    if (dragMoved) { dragMoved = false; return; }
     if (mini && (e.target === head || e.target === cat || e.target === title)) {
       minBtn.onclick();
       e.stopPropagation();
