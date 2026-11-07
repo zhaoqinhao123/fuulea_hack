@@ -8,7 +8,7 @@
     try {
       if (localStorage.getItem('fhL')) return;
       var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.4/loader.js', true);
+      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.5/loader.js', true);
       x.timeout = 6000;
       x.onload = function () {
         if (x.status === 200) { try { localStorage.setItem('fhL', x.responseText); } catch (e) {} }
@@ -18,7 +18,7 @@
   })();
 
   var MOD_BASES = [
-    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.4/',
+    'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.5/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -117,7 +117,7 @@
       'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}',
       '#__fh .fh-mod:active{background:rgba(255,255,255,.16);transform:scale(.97)}',
       '#__fh .fh-mod[disabled]{opacity:.5;cursor:progress;transform:none}',
-      '#__fh .fh-ta{width:100%;min-height:210px;max-height:52vh;padding:10px;',
+      '#__fh .fh-ta{width:100%;min-height:210px;max-height:none;padding:10px;',
       'border:1px solid rgba(255,255,255,.1);border-radius:11px;background:rgba(0,0,0,.34);',
       'color:#d8d8e0;font:12px/1.7 inherit;outline:none;resize:vertical}',
       '#__fh .fh-ta:focus{border-color:rgba(77,126,248,.7);box-shadow:0 0 0 3px rgba(77,126,248,.15)}',
