@@ -28,8 +28,7 @@
   }
   var tutB = ib('❓', function () { tutorial(); }, '教程');
   tutB.style.fontSize = '16px';
-  var closeB = ib('✕', function () { camStop(); root.remove(); stage.remove(); }, '关闭');
-  bar.append(title, tutB, closeB);
+  var closeB = ib('✕', function () { camStop(); root.remove(); stage.remove(); }, '关闭');  bar.append(title, tutB, closeB);
 
   var body = document.createElement('div');
   body.style.cssText = 'flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px';
@@ -159,42 +158,73 @@
     camStop();
 
     var w = document.createElement('div');
-    w.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column';
+    w.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;overflow:hidden';
 
     var v = document.createElement('video');
     v.autoplay = true;
     v.muted = true;
     v.playsInline = true;
     v.setAttribute('playsinline', '');
-    v.style.cssText = 'flex:1;width:100%;height:100%;object-fit:contain;background:#000';
-    w.append(v);
+    v.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;background:#000';
 
-    var ctl = document.createElement('div');
-    ctl.style.cssText = 'display:flex;gap:10px;justify-content:center;padding:12px;background:#141418';
+    var top = document.createElement('div');
+    top.textContent = '对准要转印的画面，按下面白色圆钮拍照';
+    top.style.cssText = 'position:absolute;left:0;right:0;top:0;padding:14px 16px 12px;' +
+      'background:linear-gradient(rgba(0,0,0,.62),transparent);color:#e6e6ea;pointer-events:none;' +
+      'font:13px/1.5 -apple-system,"PingFang SC",sans-serif;text-align:center';
 
-    function cb(t, bg) {
+    var msg = document.createElement('div');
+    msg.textContent = '正在启动相机…';
+    msg.style.cssText = 'position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);' +
+      'text-align:center;color:#cfcfd6;white-space:pre-wrap;pointer-events:none;padding:0 24px;' +
+      'font:13px/1.9 -apple-system,"PingFang SC",sans-serif';
+
+    var bar = document.createElement('div');
+    bar.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;' +
+      'justify-content:center;gap:26px;' +
+      'padding:14px 16px calc(18px + env(safe-area-inset-bottom,0px));' +
+      'background:linear-gradient(transparent,rgba(0,0,0,.78))';
+
+    function circle(t, size) {
       var b = document.createElement('button');
       b.textContent = t;
-      b.style.cssText = 'height:44px;padding:0 18px;border:0;border-radius:10px;background:' + (bg || '#2a2a32') +
-        ';color:#ddd;font:14px/1 inherit;cursor:pointer';
-      ctl.append(b);
+      b.style.cssText = 'width:' + size + 'px;height:' + size + 'px;padding:0;border-radius:50%;' +
+        'border:1px solid rgba(255,255,255,.32);background:rgba(28,28,34,.7);color:#fff;' +
+        'font:20px/1 -apple-system,"PingFang SC",sans-serif;cursor:pointer;flex:0 0 auto';
       return b;
     }
 
-    var snap = cb('📸 拍照', '#3a6df0');
-    snap.style.color = '#fff';
-    var flip = cb('🔄 翻转');
-    var quit = cb('✕ 关闭');
-    w.append(ctl);
+    var flip = circle('🔄', 52);
+    var quit = circle('✕', 52);
+
+    var snap = document.createElement('button');
+    snap.textContent = '拍照';
+    snap.disabled = true;
+    snap.style.cssText = 'width:78px;height:78px;padding:0;border-radius:50%;flex:0 0 auto;' +
+      'border:4px solid rgba(255,255,255,.9);background:#fff;color:#111;opacity:.4;' +
+      'font:700 15px/1 -apple-system,"PingFang SC",sans-serif;cursor:pointer;' +
+      'box-shadow:0 4px 18px rgba(0,0,0,.5)';
+
+    bar.append(flip, snap, quit);
+    w.append(v, top, bar, msg);
     document.body.append(w);
     camWrap = w;
+
+    function fail(text) {
+      msg.textContent = text;
+      snap.disabled = true;
+      snap.style.opacity = '.4';
+      if (camStream) {
+        camStream.getTracks().forEach(function (t) { t.stop(); });
+        camStream = null;
+      }
+    }
 
     var settled = false;
     var guard = setTimeout(function () {
       if (settled) return;
       settled = true;
-      info.textContent = '网页相机 8 秒没响应\n大概是被设备策略拦住了\n可以点「🖼 选图」从已有文件挑';
-      camStop();
+      fail('相机 8 秒没响应\n大概被设备策略拦住了\n\n可以点「✕」退出，改用「🖼 选图」');
     }, 8000);
 
     navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camFacing } }, audio: false })
@@ -204,27 +234,31 @@
         if (camWrap !== w) { st.getTracks().forEach(function (t) { t.stop(); }); return; }
         camStream = st;
         v.srcObject = st;
+        msg.textContent = '';
+        snap.disabled = false;
+        snap.style.opacity = '1';
         return v.play();
       })
       .catch(function (e) {
         settled = true;
         clearTimeout(guard);
-        var msg = e.name === 'NotAllowedError' ? '权限被拒绝'
+        var why = e.name === 'NotAllowedError' ? '权限被拒绝'
           : (e.name === 'NotFoundError' ? '没有可用摄像头' : (e.message || e.name));
-        info.textContent = '打不开网页相机：' + msg + '\n可以点「🖼 选图」从已有文件挑';
-        camStop();
+        fail('打不开网页相机：' + why + '\n\n可以点「✕」退出，改用「🖼 选图」');
       });
 
     snap.onclick = function () {
-      if (!v.videoWidth) return;
+      if (!camStream || !v.videoWidth) return;
       var c = document.createElement('canvas');
       c.width = v.videoWidth;
       c.height = v.videoHeight;
       c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      var w0 = c.width, h0 = c.height;
       c.toBlob(function (b) {
         if (!b) return;
         loadFile(b);
         camStop();
+        info.textContent = '已拍下 ' + w0 + ' × ' + h0 + '\n正在算分块…';
       }, 'image/png');
     };
 
@@ -236,6 +270,31 @@
   }
 
   // ---- 播放 ----
+  // 录屏时把页面上所有浮动层（面板、其它模块窗口、页面自带的固定栏）全藏起来，
+  // 否则它们会盖在画布上被一起录进去，拼图就废了。
+  var hiddenNodes = [];
+
+  function hideChrome() {
+    hiddenNodes = [];
+    var kids = document.body.children;
+    for (var i = 0; i < kids.length; i++) {
+      var el = kids[i];
+      if (el === stage || el === root) continue;
+      var st;
+      try { st = window.getComputedStyle(el); } catch (e) { continue; }
+      if (!st || st.position !== 'fixed' || st.display === 'none') continue;
+      hiddenNodes.push([el, el.style.display]);
+      el.style.display = 'none';
+    }
+  }
+
+  function showChrome() {
+    for (var i = 0; i < hiddenNodes.length; i++) {
+      hiddenNodes[i][0].style.display = hiddenNodes[i][1];
+    }
+    hiddenNodes = [];
+  }
+
   function tileAt(i) {
     var c = i % plan.cols, r = Math.floor(i / plan.cols);
     var sx = c * plan.tw, sy = r * plan.th;
@@ -252,6 +311,7 @@
     playing = true;
     // 播放时把设置面板藏掉，画面里不能有我们的 UI
     root.style.display = 'none';
+    hideChrome();
     stage.style.display = 'block';
     stage.width = plan.tw;
     stage.height = plan.th;
@@ -272,6 +332,7 @@
         ctx.fillRect(0, 0, plan.tw, plan.th);
         setTimeout(function () {
           stage.style.display = 'none';
+          showChrome();
           root.style.display = 'flex';
           playing = false;
           info.textContent = '播放完成（共 ' + n + ' 块）。可以停止录屏了。';

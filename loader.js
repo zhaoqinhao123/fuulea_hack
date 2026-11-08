@@ -1,10 +1,16 @@
 /* fuulea_hack loader — 二级面板（学习/查看/工具/便签）+ 拖动 + 小窗 */
 (function () {
-  if (document.getElementById('__fh')) return;
+  // 再注入一次 = 隐形 / 显形（面板、模块窗口都不留痕迹）
+  var PRE = document.getElementById('__fh');
+  if (PRE) {
+    var wasHidden = PRE.style.display === 'none';
+    PRE.style.display = wasHidden ? '' : 'none';
+    return;
+  }
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = 'v2.13';
+  var TAG = 'v2.14';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
