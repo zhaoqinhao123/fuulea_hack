@@ -1,5 +1,36 @@
 /* fuulea_hack loader — 二级面板（学习/查看/工具/便签）+ 拖动 + 小窗 */
 (function () {
+  // 强改等级补丁：页面自己的 petStage/petPts 只认总积分，
+  // 这里让带 fs 字段的灵宠直接显示指定等级（不动积分）。
+  // 注意：state/PET_REQ/RATIOS 可能是 let/const 声明的全局词法变量，不在 window 上，
+  // 必须用裸标识符 + typeof 读，否则拿到 undefined。
+  try {
+    if (!window.__fhFS && typeof petStage === 'function') {
+      var _ps = petStage;
+      var _pp = (typeof petPts === 'function') ? petPts : null;
+      window.petStage = function (i) {
+        var p = null;
+        try { p = (typeof state !== 'undefined' && state.pets) ? state.pets[i] : null; } catch (e) {}
+        if (p && typeof p.fs === 'number' && p.fs >= 0) return Math.min(p.fs, 7);
+        return _ps.apply(this, arguments);
+      };
+      if (_pp) {
+        window.petPts = function (i) {
+          var p = null;
+          try { p = (typeof state !== 'undefined' && state.pets) ? state.pets[i] : null; } catch (e) {}
+          if (p && typeof p.fs === 'number') {
+            var req = 0, rt = 0;
+            try { req = (typeof PET_REQ !== 'undefined' && PET_REQ[i]) || 0; } catch (e) {}
+            try { rt = (typeof RATIOS !== 'undefined' && RATIOS[p.fs]) || 0; } catch (e) {}
+            return Math.round(req * rt);
+          }
+          return _pp.apply(this, arguments);
+        };
+      }
+      window.__fhFS = 1;
+    }
+  } catch (e) {}
+
   // 再注入一次 = 隐形 / 显形。同一次注入常被页面重复触发（答题重渲染又跑一遍），
   // 用时间戳挡掉 1.5 秒内的重复，否则会「闪一下就消失」。
   var PRE = document.getElementById('__fh');
@@ -13,7 +44,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = 'v2.16';
+  var TAG = 'v2.17';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
