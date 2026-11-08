@@ -198,15 +198,17 @@
       }));
       sPet.append(row);
     });
+    // 上限跟着分段表走（loader 已把它延到 8）；分段表没延时退回 4
+    var PET_CAP = (typeof SEG_START !== 'undefined' && SEG_START.length) ? SEG_START.length : 4;
     var ab = addBtn('＋ 添加一只', function () {
-      if (typeof MAX_PETS === 'number' && state.pets.length >= MAX_PETS) return;
+      if (state.pets.length >= PET_CAP) return;
       state.pets.push({ sp: 'fox', name: '灵宠' + (state.pets.length + 1), pts: 0 });
       drawPets();
     });
     ab.dataset.row = '1';
-    if (typeof MAX_PETS === 'number' && state.pets.length >= MAX_PETS) {
+    if (state.pets.length >= PET_CAP) {
       ab.disabled = true;
-      ab.textContent = '已达上限 ' + MAX_PETS + ' 只';
+      ab.textContent = '已达上限 ' + PET_CAP + ' 只';
       ab.style.opacity = '.45';
       ab.style.cursor = 'default';
     }

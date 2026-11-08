@@ -1,5 +1,17 @@
 /* fuulea_hack loader — 二级面板（学习/查看/工具/便签）+ 拖动 + 小窗 */
 (function () {
+  // 破上限：页面的分段表只有 4 项，补到 8 项后第 5 只起也能正常自动分级。
+  // 规律：SEG_START[i+1] = SEG_START[i] + PET_REQ[i] + 100
+  try {
+    if (typeof PET_REQ !== 'undefined' && typeof SEG_START !== 'undefined') {
+      var _cap = 8;
+      while (PET_REQ.length < _cap) PET_REQ.push(1900);
+      while (SEG_START.length < _cap) {
+        SEG_START.push(SEG_START[SEG_START.length - 1] + PET_REQ[SEG_START.length - 1] + 100);
+      }
+    }
+  } catch (e) {}
+
   // 强改等级补丁：页面自己的 petStage/petPts 只认总积分，
   // 这里让带 fs 字段的灵宠直接显示指定等级（不动积分）。
   // 注意：state/PET_REQ/RATIOS 可能是 let/const 声明的全局词法变量，不在 window 上，
@@ -44,7 +56,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = 'v2.17';
+  var TAG = 'v2.18';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
