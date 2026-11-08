@@ -103,7 +103,7 @@
   sRank.append(rankBox);
 
   // ── 灵宠 ──
-  var sPet = section('灵宠', '种类 / 姓名 / 顺序（↑↓ 调整）');
+  var sPet = section('灵宠', '种类 / 姓名 / 等级 / 顺序（↑↓）。等级由总积分反推，改一只会连带其它');
 
   function drawPets() {
     sPet.querySelectorAll('[data-row]').forEach(function (n) { n.remove(); });
@@ -127,26 +127,38 @@
       nm.oninput = function () { p.name = nm.value; };
 
       // 等级：由 earned 反推，改一只会影响后面几只（这是原本的累积模型）
+      var hasSeg = i < SEG_START.length && i < PET_REQ.length;
       var st = document.createElement('select');
       st.style.cssText = 'width:74px;padding:8px;border:1px solid #333;border-radius:8px;background:#101014;color:#ddd;font:12px/1 inherit';
-      var curStage = (typeof petStage === 'function') ? petStage(i) : 0;
-      STAGE_NAMES.forEach(function (label, si) {
-        var o = document.createElement('option');
-        o.value = si;
-        o.textContent = label;
-        o.selected = si === curStage;
-        st.append(o);
-      });
-      st.title = '当前：' + STAGE_NAMES[curStage] + '（' + (SEG_START[i] || 0) + ' 起）';
-      st.onchange = function () {
-        var si = parseInt(st.value, 10) || 0;
-        var req = PET_REQ[i] || 0;
-        var ratio = RATIOS[si] || 0;
-        var need = (SEG_START[i] || 0) + Math.ceil(req * ratio);
-        state.earned = need;
-        state.score = Math.max(state.score, need);
-        drawPets();
-      };
+      var curStage = (hasSeg && typeof petStage === 'function') ? petStage(i) : 0;
+      if (hasSeg) {
+        STAGE_NAMES.forEach(function (label, si) {
+          var o = document.createElement('option');
+          o.value = si;
+          o.textContent = label;
+          o.selected = si === curStage;
+          st.append(o);
+        });
+        st.title = '当前：' + STAGE_NAMES[curStage] + '（' + (SEG_START[i] || 0) + ' 起）';
+        st.onchange = function () {
+          var si = parseInt(st.value, 10) || 0;
+          var req = PET_REQ[i] || 0;
+          var ratio = RATIOS[si] || 0;
+          var need = (SEG_START[i] || 0) + Math.ceil(req * ratio);
+          state.earned = need;
+          // 必须跟积分同步：否则保存时 scoreIn 里的旧值会把 earned 盖回去，等级白改
+          state.score = need;
+          scoreIn.value = need;
+          drawPets();
+        };
+      } else {
+        var na = document.createElement('option');
+        na.textContent = '无分级';
+        st.append(na);
+        st.disabled = true;
+        st.title = '第 ' + (i + 1) + ' 只超出分段模型（只有前 ' + SEG_START.length + ' 只有等级）';
+        st.style.opacity = '.5';
+      }
 
       var up = document.createElement('button');
       up.textContent = '↑';
@@ -165,10 +177,19 @@
       }));
       sPet.append(row);
     });
-    sPet.append(addBtn('＋ 添加一只', function () {
+    var ab = addBtn('＋ 添加一只', function () {
+      if (typeof MAX_PETS === 'number' && state.pets.length >= MAX_PETS) return;
       state.pets.push({ sp: 'fox', name: '灵宠' + (state.pets.length + 1), pts: 0 });
       drawPets();
-    }));
+    });
+    ab.dataset.row = '1';
+    if (typeof MAX_PETS === 'number' && state.pets.length >= MAX_PETS) {
+      ab.disabled = true;
+      ab.textContent = '已达上限 ' + MAX_PETS + ' 只';
+      ab.style.opacity = '.45';
+      ab.style.cursor = 'default';
+    }
+    sPet.append(ab);
   }
   drawPets();
 
