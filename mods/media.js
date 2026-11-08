@@ -171,7 +171,7 @@
           ctl.style.display = 'none';
           var tip = document.createElement('div');
           tip.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#999';
-          tip.innerHTML = '无法打开相机：' + msg + '<br><span style="font-size:12px;opacity:.6">可以试试系统相机，或用「本地」从相册选</span>';
+          tip.innerHTML = '无法打开相机：' + msg + '<br><span style="font-size:12px;opacity:.6">先在系统设置里允许本页摄像头权限，再重试</span>';
           s.body.append(tip);
         });
     }
@@ -243,34 +243,18 @@
     input.click();
   }
 
-  // 走系统相机 App：拍照/录像由系统完成，文件直接进相册
-  function nativeCam(kind) {
-    var input = document.createElement('input');
-    input.type = 'file';
-    input.accept = kind === 'video' ? 'video/*' : 'image/*';
-    input.setAttribute('capture', 'environment');
-    input.onchange = function () {
-      var f = input.files && input.files[0];
-      if (f) view(f, f.name);
-    };
-    input.click();
-  }
-
   // ── 入口 ──
+  // 全部拍摄走网页相机（getUserMedia）：不再用 capture 属性调系统相机 App
   var s = shell('相机 / 本地媒体', '__md');
   var wrap = document.createElement('div');
   wrap.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px';
-  var a = btn('📷 网页相机（实时预览）', 'min-width:220px');
-  var n1 = btn('📸 系统拍照', 'min-width:220px');
-  var n2 = btn('🎥 系统录像', 'min-width:220px');
+  var a = btn('📷 拍照 / 录像（网页相机）', 'min-width:220px');
   var b = btn('🖼 本地图片/视频', 'min-width:220px');
   var tip = document.createElement('div');
   tip.style.cssText = 'color:#666;font-size:12px;text-align:center;max-width:430px;line-height:1.8';
-  tip.innerHTML = '网页相机：实时预览，录制格式取决于浏览器（你这台只能 WebM）。<br>系统拍照/录像：调系统相机，文件直接进相册，格式是 MP4/JPG。';
+  tip.innerHTML = '全部走网页相机：实时预览，不调系统相机 App（避免被设备策略拦掉）。<br>拍照出 PNG，录像格式取决于浏览器（你这台只有 WebM）。';
   a.onclick = function () { s.root.remove(); camera(); };
-  n1.onclick = function () { nativeCam('photo'); };
-  n2.onclick = function () { nativeCam('video'); };
   b.onclick = function () { local(); };
-  wrap.append(a, n1, n2, b, tip);
+  wrap.append(a, b, tip);
   s.body.append(wrap);
 })();

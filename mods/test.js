@@ -67,6 +67,176 @@
     }, function () { ui.copy.textContent = '失败'; });
   };
 
+  // ── 注入串（自动更新） ──
+  var REPO = 'zhaoqinhao123/fuulea_hack';
+  var PROJ = '88544686';
+  var cur = window.__fhTag || '?';
+
+  function mkBtn(t) {
+    var b = document.createElement('button');
+    b.textContent = t;
+    b.style.cssText = 'height:30px;padding:0 10px;border:1px solid #3a3a42;border-radius:8px;' +
+      'background:#26262c;color:#ccc;font:12px/1 inherit;cursor:pointer';
+    return b;
+  }
+
+  function copyText(t, done) {
+    var fin = false;
+    function doneOnce(ok) { if (fin) return; fin = true; done(ok); }
+    setTimeout(function () { doneOnce(false); }, 1600);
+    function fallback() {
+      try {
+        var x = document.createElement('textarea');
+        x.value = t;
+        x.style.cssText = 'position:fixed;left:-9999px;top:0';
+        document.body.append(x);
+        x.select();
+        var ok = document.execCommand('copy');
+        x.remove();
+        doneOnce(ok);
+      } catch (e) { doneOnce(false); }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        navigator.clipboard.writeText(t).then(function () { doneOnce(true); }, fallback);
+      } catch (e) { fallback(); }
+    } else fallback();
+  }
+
+  function withTimeout(url, ms) {
+    var c = window.AbortController ? new AbortController() : null;
+    var t = setTimeout(function () { if (c) c.abort(); }, ms);
+    var opt = { cache: 'no-store' };
+    if (c) opt.signal = c.signal;
+    return fetch(url, opt).then(function (r) { clearTimeout(t); return r; },
+      function (e) { clearTimeout(t); throw e; });
+  }
+
+  function vnum(s) {
+    var m = String(s).match(/(\d+)\.(\d+)/);
+    return m ? [+m[1], +m[2]] : null;
+  }
+  function desc(a, b) { return (b[0] - a[0]) || (b[1] - a[1]); }
+
+  function findLatest() {
+    return withTimeout('https://data.jsdelivr.com/v1/packages/gh/' + REPO, 6000)
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var vs = (j.versions || []).map(function (v) { return v.version; }).filter(vnum);
+        if (!vs.length) throw new Error('空');
+        vs.sort(function (a, b) { return desc(vnum(a), vnum(b)); });
+        return vs[0];
+      })
+      .catch(function () {
+        return withTimeout('https://gitlab.com/api/v4/projects/' + PROJ + '/repository/tags?per_page=100', 6000)
+          .then(function (r) { return r.json(); })
+          .then(function (a) {
+            var vs = a.map(function (t) { return t.name; }).filter(vnum);
+            if (!vs.length) throw new Error('没有标签');
+            vs.sort(function (x, y) { return desc(vnum(x), vnum(y)); });
+            return vs[0];
+          });
+      });
+  }
+
+  var box = document.createElement('div');
+  box.style.cssText = 'padding:9px 10px 8px;border-bottom:1px solid #2e2e35;display:flex;flex-direction:column;gap:7px';
+
+  var top = document.createElement('div');
+  top.style.cssText = 'display:flex;align-items:center;gap:8px';
+  var lab = document.createElement('div');
+  lab.textContent = '注入串';
+  lab.style.cssText = 'font-weight:700;color:#bbb;font-size:12px';
+  var stat = document.createElement('div');
+  stat.style.cssText = 'flex:1;min-width:0;font:11px/1.4 ui-monospace,Menlo,monospace;color:#7a7a88;' +
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+  stat.textContent = '当前 ' + cur;
+  top.append(lab, stat);
+
+  var ta = document.createElement('textarea');
+  ta.readOnly = true;
+  ta.rows = 2;
+  ta.placeholder = '点下面的按钮获取最新注入串';
+  ta.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 8px;border:1px solid #2e2e35;' +
+    'border-radius:8px;background:#101014;color:#9fd6a0;font:11px/1.5 ui-monospace,Menlo,monospace;' +
+    'resize:none;word-break:break-all';
+
+  var btns = document.createElement('div');
+  btns.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;align-items:center';
+  var get = mkBtn('🔄 查最新版并复制');
+  var shortB = mkBtn('复制短串');
+
+  var chkWrap = document.createElement('label');
+  chkWrap.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;color:#8a8a99;margin-left:auto';
+  var chk = document.createElement('input');
+  chk.type = 'checkbox';
+  chk.style.cssText = 'width:15px;height:15px;accent-color:#3a6df0';
+  try { chk.checked = localStorage.getItem('fh:autoUpd') !== '0'; } catch (e) { chk.checked = true; }
+  chk.onchange = function () {
+    try { localStorage.setItem('fh:autoUpd', chk.checked ? '1' : '0'); } catch (e) {}
+  };
+  chkWrap.append(chk, document.createTextNode('打开时自动查'));
+
+  btns.append(get, shortB, chkWrap);
+  box.append(top, ta, btns);
+  ui.list.parentNode.insertBefore(box, ui.list);
+
+  var SHORT = '<img src=x onerror="eval(localStorage.fhL)">';
+
+  function run() {
+    get.disabled = true;
+    get.textContent = '查询中…';
+    stat.textContent = '正在查最新版…';
+    findLatest().then(function (ver) {
+      var tag = /^v/.test(ver) ? ver : ('v' + ver);
+      var cdn = 'https://cdn.jsdelivr.net/gh/' + REPO + '@' + tag + '/loader.js';
+      return withTimeout(cdn + '?t=' + Date.now(), 8000)
+        .then(function (r) { return r.text().then(function (t) { return { ok: r.ok && t.length > 1000, text: t }; }); })
+        .catch(function () { return { ok: false, text: '' }; })
+        .then(function (res) {
+          var base = res.ok ? cdn
+            : ('https://raw.githubusercontent.com/' + REPO + '/' + tag + '/loader.js');
+          var inj = '<img src=x onerror="with(document)body.appendChild(createElement(\'script\')).src=\'' +
+            base.replace(/^https:/, '') + '\'">';
+          ta.value = inj;
+
+          if (res.ok) {
+            try {
+              localStorage.setItem('fhL', res.text);
+              localStorage.setItem('fhV', tag);
+            } catch (e) {}
+          }
+
+          copyText(inj, function (ok) {
+            var same = vnum(tag) && vnum(cur) && desc(vnum(tag), vnum(cur)) === 0;
+            stat.textContent = '最新 ' + tag + (same ? '（与当前相同）' : '（当前 ' + cur + '）') +
+              ' · ' + (res.ok ? 'CDN 通' : '走 GitHub') + ' · ' + inj.length + ' 字 · ' +
+              (ok ? '已复制' : '复制失败，长按框内文字');
+            get.disabled = false;
+            get.textContent = '🔄 重新查';
+            shortB.textContent = res.ok ? '复制短串' : '复制短串（未更新缓存）';
+            render(ui);
+          });
+        });
+    }).catch(function (e) {
+      stat.textContent = '查不到最新版：' + (e.name === 'AbortError' ? '超时' : (e.message || e.name));
+      get.disabled = false;
+      get.textContent = '🔄 重试';
+    });
+  }
+
+  get.onclick = run;
+  shortB.onclick = function () {
+    copyText(SHORT, function (ok) {
+      stat.textContent = ok ? '短串已复制（需本机缓存已是新版）' : '复制失败，长按框内文字';
+    });
+  };
+
+  add('loader 版本', null, cur);
+  try {
+    if (chk.checked) setTimeout(run, 200);
+  } catch (e) {}
+
   // ── 环境 ──
   add('协议', null, location.protocol + '  secure=' + window.isSecureContext);
   add('UA', null, navigator.userAgent);

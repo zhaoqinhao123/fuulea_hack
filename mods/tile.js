@@ -28,7 +28,7 @@
   }
   var tutB = ib('❓', function () { tutorial(); }, '教程');
   tutB.style.fontSize = '16px';
-  var closeB = ib('✕', function () { root.remove(); stage.remove(); }, '关闭');
+  var closeB = ib('✕', function () { camStop(); root.remove(); stage.remove(); }, '关闭');
   bar.append(title, tutB, closeB);
 
   var body = document.createElement('div');
@@ -49,16 +49,11 @@
     b.style.cssText = 'flex:1;min-width:120px;height:40px;border:0;border-radius:10px;background:#2a2a32;color:#ddd;font:13px/1 inherit;cursor:pointer';
   });
 
-  var shotIn = document.createElement('input');
-  shotIn.type = 'file';
-  shotIn.accept = 'image/*';
-  shotIn.setAttribute('capture', 'environment');
-  shotIn.style.display = 'none';
   var pickIn = document.createElement('input');
   pickIn.type = 'file';
   pickIn.accept = 'image/*';
   pickIn.style.display = 'none';
-  row.append(shotBtn, pickBtn, shotIn, pickIn);
+  row.append(shotBtn, pickBtn, pickIn);
 
   // 预览与信息
   var info = document.createElement('div');
@@ -139,11 +134,94 @@
     im.src = url;
   }
 
-  shotBtn.onclick = function () { shotIn.click(); };
+  shotBtn.onclick = function () { camOpen(camFacing); };
   pickBtn.onclick = function () { pickIn.click(); };
-  shotIn.onchange = function () { loadFile(shotIn.files[0]); };
   pickIn.onchange = function () { loadFile(pickIn.files[0]); };
   secIn.oninput = function () { if (img) refresh(); };
+
+  // ---- 网页相机（不调系统相机 App） ----
+  var camWrap = null, camStream = null, camFacing = 'environment';
+
+  function camStop() {
+    if (camStream) {
+      camStream.getTracks().forEach(function (t) { t.stop(); });
+      camStream = null;
+    }
+    if (camWrap) { camWrap.remove(); camWrap = null; }
+  }
+
+  function camOpen(facing) {
+    camFacing = facing;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      info.textContent = '这个浏览器不给网页相机\n（file:// 或非安全上下文常见）\n只能点「🖼 选图」从已有文件挑';
+      return;
+    }
+    camStop();
+
+    var w = document.createElement('div');
+    w.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column';
+
+    var v = document.createElement('video');
+    v.autoplay = true;
+    v.muted = true;
+    v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.style.cssText = 'flex:1;width:100%;height:100%;object-fit:contain;background:#000';
+    w.append(v);
+
+    var ctl = document.createElement('div');
+    ctl.style.cssText = 'display:flex;gap:10px;justify-content:center;padding:12px;background:#141418';
+
+    function cb(t, bg) {
+      var b = document.createElement('button');
+      b.textContent = t;
+      b.style.cssText = 'height:44px;padding:0 18px;border:0;border-radius:10px;background:' + (bg || '#2a2a32') +
+        ';color:#ddd;font:14px/1 inherit;cursor:pointer';
+      ctl.append(b);
+      return b;
+    }
+
+    var snap = cb('📸 拍照', '#3a6df0');
+    snap.style.color = '#fff';
+    var flip = cb('🔄 翻转');
+    var quit = cb('✕ 关闭');
+    w.append(ctl);
+    document.body.append(w);
+    camWrap = w;
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camFacing } }, audio: false })
+      .then(function (st) {
+        if (camWrap !== w) { st.getTracks().forEach(function (t) { t.stop(); }); return; }
+        camStream = st;
+        v.srcObject = st;
+        return v.play();
+      })
+      .catch(function (e) {
+        var msg = e.name === 'NotAllowedError' ? '权限被拒绝'
+          : (e.name === 'NotFoundError' ? '没有可用摄像头' : (e.message || e.name));
+        info.textContent = '打不开网页相机：' + msg + '\n可以点「🖼 选图」从已有文件挑';
+        camStop();
+      });
+
+    snap.onclick = function () {
+      if (!v.videoWidth) return;
+      var c = document.createElement('canvas');
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob(function (b) {
+        if (!b) return;
+        loadFile(b);
+        camStop();
+      }, 'image/png');
+    };
+
+    flip.onclick = function () {
+      camOpen(camFacing === 'environment' ? 'user' : 'environment');
+    };
+
+    quit.onclick = function () { camStop(); };
+  }
 
   // ---- 播放 ----
   function tileAt(i) {
@@ -242,7 +320,7 @@
       box.append(d);
     }
 
-    step('1', '取图', '点「📷 拍摄」现场拍，或「🖼 选图」挑一张。拍完图片直接进内存，不用去相册里找。');
+    step('1', '取图', '点「📷 拍摄」用网页相机现场拍（实时预览，不调系统相机 App），或「🖼 选图」挑一张。拍完图片直接进内存，不用去相册里找。');
     step('2', '记下分块', '面板会显示「cols=… rows=…」。这是拼图要用的参数，两个数必须和录屏时一致。');
     step('3', '先开录屏', '用系统录屏，画质调到最高（默认可能压到 720p，那样还原上限也跟着降）。');
     step('4', '回来点开始', '转印时我们的界面全部隐藏。开头黑屏 2 秒给录屏留余量，之后每块停留一次，播完自动返回。');
