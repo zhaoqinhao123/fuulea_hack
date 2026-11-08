@@ -119,24 +119,35 @@
   function desc(a, b) { return (b[0] - a[0]) || (b[1] - a[1]); }
 
   function findLatest() {
-    return withTimeout('https://data.jsdelivr.com/v1/packages/gh/' + REPO, 6000)
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        var vs = (j.versions || []).map(function (v) { return v.version; }).filter(vnum);
-        if (!vs.length) throw new Error('空');
-        vs.sort(function (a, b) { return desc(vnum(a), vnum(b)); });
-        return vs[0];
-      })
-      .catch(function () {
-        return withTimeout('https://gitlab.com/api/v4/projects/' + PROJ + '/repository/tags?per_page=100', 6000)
-          .then(function (r) { return r.json(); })
-          .then(function (a) {
-            var vs = a.map(function (t) { return t.name; }).filter(vnum);
-            if (!vs.length) throw new Error('没有标签');
-            vs.sort(function (x, y) { return desc(vnum(x), vnum(y)); });
-            return vs[0];
-          });
-      });
+    function fromCdn() {
+      return withTimeout('https://data.jsdelivr.com/v1/packages/gh/' + REPO, 6000)
+        .then(function (r) { return r.json(); })
+        .then(function (j) { return (j.versions || []).map(function (v) { return v.version; }).filter(vnum); })
+        .catch(function () { return []; });
+    }
+    function fromGitlab() {
+      return withTimeout('https://gitlab.com/api/v4/projects/' + PROJ + '/repository/tags?per_page=100', 6000)
+        .then(function (r) { return r.json(); })
+        .then(function (a) {
+          return a.map(function (t) { return { ver: t.name, sha: (t.commit && t.commit.id) ? t.commit.id.slice(0, 7) : '' }; })
+            .filter(function (x) { return vnum(x.ver); });
+        })
+        .catch(function () { return []; });
+    }
+    return Promise.all([fromCdn(), fromGitlab()]).then(function (rs) {
+      var tags = rs[1];
+      var vers = rs[0].concat(tags.map(function (x) { return x.ver; }));
+      if (cur && vnum(cur)) vers.push(cur);      // 源比本机还旧时，不退版
+      vers = vers.filter(vnum);
+      if (!vers.length) throw new Error('查不到版本');
+      vers.sort(function (a, b) { return desc(vnum(a), vnum(b)); });
+      var win = vers[0];
+      var sha = '';
+      for (var i = 0; i < tags.length; i++) {
+        if (vnum(tags[i].ver) && vnum(win) && desc(vnum(tags[i].ver), vnum(win)) === 0) { sha = tags[i].sha; break; }
+      }
+      return { ver: win, sha: sha };
+    });
   }
 
   var box = document.createElement('div');
@@ -187,15 +198,21 @@
     get.disabled = true;
     get.textContent = '查询中…';
     stat.textContent = '正在查最新版…';
-    findLatest().then(function (ver) {
-      var tag = /^v/.test(ver) ? ver : ('v' + ver);
+    findLatest().then(function (found) {
+      var tag = /^v/.test(found.ver) ? found.ver : ('v' + found.ver);
       var cdn = 'https://cdn.jsdelivr.net/gh/' + REPO + '@' + tag + '/loader.js';
-      return withTimeout(cdn + '?t=' + Date.now(), 8000)
-        .then(function (r) { return r.text().then(function (t) { return { ok: r.ok && t.length > 1000, text: t }; }); })
-        .catch(function () { return { ok: false, text: '' }; })
-        .then(function (res) {
-          var base = res.ok ? cdn
-            : ('https://raw.githubusercontent.com/' + REPO + '/' + tag + '/loader.js');
+      var shaUrl = found.sha ? ('https://cdn.jsdelivr.net/gh/' + REPO + '@' + found.sha + '/loader.js') : '';
+      function tryFetch(u) {
+        return withTimeout(u + '?t=' + Date.now(), 8000)
+          .then(function (r) { return r.text().then(function (t) { return { ok: r.ok && t.length > 1000, text: t, url: u }; }); })
+          .catch(function () { return { ok: false, text: '', url: u }; });
+      }
+      return tryFetch(cdn).then(function (res) {
+        if (res.ok || !shaUrl) return res;
+        return tryFetch(shaUrl).then(function (r2) { return r2.ok ? r2 : res; });
+      }).then(function (res) {
+          var base = res.ok ? res.url
+            : ('https://cdn.jsdelivr.net/gh/' + REPO + '@' + (found.sha || tag) + '/loader.js');
           var inj = '<img src=x onerror="with(document)body.appendChild(createElement(\'script\')).src=\'' +
             base.replace(/^https:/, '') + '\'">';
           ta.value = inj;
