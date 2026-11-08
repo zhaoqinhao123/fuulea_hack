@@ -159,13 +159,29 @@
         s.body.innerHTML = '<div style="position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#999">当前浏览器不支持 getUserMedia<br><span style="font-size:12px;opacity:.6">（file:// 或非安全上下文常见）</span></div>';
         return;
       }
+      var settled = false;
+      var guard = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        v.style.display = 'none';
+        ctl.style.display = 'none';
+        var tip = document.createElement('div');
+        tip.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#999';
+        tip.textContent = '网页相机 8 秒没响应，大概被设备策略拦住了。';
+        s.body.append(tip);
+      }, 8000);
+
       navigator.mediaDevices.getUserMedia({ video: { facingMode: f }, audio: false })
         .then(function (st) {
+          settled = true;
+          clearTimeout(guard);
           stream = st;
           v.srcObject = st;
           return v.play();
         })
         .catch(function (e) {
+          settled = true;
+          clearTimeout(guard);
           var msg = e.name === 'NotAllowedError' ? '权限被拒绝' : (e.name === 'NotFoundError' ? '没有可用摄像头' : e.message);
           v.style.display = 'none';
           ctl.style.display = 'none';

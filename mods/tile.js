@@ -189,14 +189,26 @@
     document.body.append(w);
     camWrap = w;
 
+    var settled = false;
+    var guard = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      info.textContent = '网页相机 8 秒没响应\n大概是被设备策略拦住了\n可以点「🖼 选图」从已有文件挑';
+      camStop();
+    }, 8000);
+
     navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: camFacing } }, audio: false })
       .then(function (st) {
+        settled = true;
+        clearTimeout(guard);
         if (camWrap !== w) { st.getTracks().forEach(function (t) { t.stop(); }); return; }
         camStream = st;
         v.srcObject = st;
         return v.play();
       })
       .catch(function (e) {
+        settled = true;
+        clearTimeout(guard);
         var msg = e.name === 'NotAllowedError' ? '权限被拒绝'
           : (e.name === 'NotFoundError' ? '没有可用摄像头' : (e.message || e.name));
         info.textContent = '打不开网页相机：' + msg + '\n可以点「🖼 选图」从已有文件挑';
