@@ -56,7 +56,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = 'v3.0';
+  var TAG = '3.0';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
