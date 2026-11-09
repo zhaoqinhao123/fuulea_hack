@@ -122,7 +122,7 @@
 
   // ── 相机 ──
   function camera() {
-    var s = shell('相机');
+    var s = shell('相机', '__md');
     var v = document.createElement('video');
     v.autoplay = true;
     v.playsInline = true;
@@ -144,7 +144,43 @@
     ctl.append(shot, rec, flip);
     s.body.append(ctl);
 
-    var stream = null, facing = 'environment', recorder = null, chunks = [], mime = '';
+    // 变焦 / 手动对焦：优先用摄像头硬件能力，没有就退回画面裁切
+    var tools = document.createElement('div');
+    tools.style.cssText = 'position:absolute;top:10px;right:10px;z-index:6;display:flex;flex-direction:column;gap:8px;align-items:flex-end';
+    s.body.append(tools);
+
+    var zoomBox = document.createElement('div');
+    zoomBox.style.cssText = 'display:flex;align-items:center;gap:4px;padding:5px 7px;border-radius:12px;background:rgba(0,0,0,.55);color:#eee;font:12px/1 inherit';
+    var zOut = document.createElement('button');
+    zOut.textContent = '−';
+    zOut.title = '缩小';
+    zOut.style.cssText = 'width:30px;height:30px;padding:0;border:0;border-radius:8px;background:rgba(255,255,255,.12);color:#fff;font:18px/1 inherit;cursor:pointer';
+    var zLab = document.createElement('span');
+    zLab.textContent = '1.0×';
+    zLab.style.cssText = 'min-width:42px;text-align:center;font-variant-numeric:tabular-nums';
+    var zIn = document.createElement('button');
+    zIn.textContent = '+';
+    zIn.title = '放大';
+    zIn.style.cssText = 'width:30px;height:30px;padding:0;border:0;border-radius:8px;background:rgba(255,255,255,.12);color:#fff;font:18px/1 inherit;cursor:pointer';
+    zoomBox.append(zOut, zLab, zIn);
+    tools.append(zoomBox);
+
+    var focusBox = document.createElement('div');
+    focusBox.style.cssText = 'display:none;align-items:center;gap:6px;padding:5px 7px;border-radius:12px;background:rgba(0,0,0,.55);color:#eee;font:12px/1 inherit';
+    var fLab = document.createElement('span');
+    fLab.textContent = '对焦';
+    var fRange = document.createElement('input');
+    fRange.type = 'range';
+    fRange.style.cssText = 'width:118px;accent-color:#5b8dfa';
+    var fAuto = document.createElement('button');
+    fAuto.textContent = '自动';
+    fAuto.style.cssText = 'height:30px;padding:0 8px;border:0;border-radius:8px;background:rgba(255,255,255,.12);color:#fff;font:12px/1 inherit;cursor:pointer';
+    focusBox.append(fLab, fRange, fAuto);
+    tools.append(focusBox);
+
+    var stream = null, track = null, facing = 'environment', recorder = null, chunks = [], mime = '';
+    var nativeZoom = false, zMin = 1, zMax = 3, zStep = 0.1, zoom = 1;
+    var focusCaps = null;
 
     function pickMime() {
       var list = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
@@ -153,6 +189,80 @@
       }
       return '';
     }
+
+    function applyZoom(z) {
+      z = Math.max(zMin, Math.min(zMax, z));
+      zoom = z;
+      zLab.textContent = z.toFixed(1) + '×';
+      if (!nativeZoom || !track) {
+        v.style.transform = 'scale(' + z + ')';
+        return;
+      }
+      try {
+        track.applyConstraints({ advanced: [{ zoom: z }] }).catch(function () {
+          nativeZoom = false;
+          v.style.transform = 'scale(' + z + ')';
+        });
+      } catch (e) {
+        nativeZoom = false;
+        v.style.transform = 'scale(' + z + ')';
+      }
+    }
+
+    function applyFocus(mode) {
+      if (!track || !focusCaps) return;
+      var adv = { focusMode: mode };
+      if (mode === 'manual') {
+        var d = parseFloat(fRange.value);
+        if (isFinite(d)) adv.focusDistance = d;
+      }
+      try { track.applyConstraints({ advanced: [adv] }).catch(function () {}); } catch (e) {}
+    }
+
+    function setupTrack(st) {
+      track = st.getVideoTracks ? st.getVideoTracks()[0] : null;
+      nativeZoom = false;
+      zMin = 1;
+      zMax = 3;
+      zStep = 0.1;
+      zoom = 1;
+      v.style.transform = '';
+      var caps = {};
+      try { caps = (track && track.getCapabilities) ? track.getCapabilities() : {}; } catch (e) {}
+      var zc = caps.zoom;
+      if (zc && typeof zc.max === 'number' && zc.max > (zc.min || 0)) {
+        nativeZoom = true;
+        zMin = zc.min || 1;
+        zMax = zc.max;
+        zStep = zc.step || 0.1;
+      }
+      var fc = caps.focusDistance;
+      if (caps.focusMode && caps.focusMode.indexOf('manual') >= 0 && fc && typeof fc.max === 'number') {
+        focusCaps = fc;
+        var fmin = (typeof fc.min === 'number') ? fc.min : 0;
+        fRange.min = String(fmin);
+        fRange.max = String(fc.max);
+        fRange.step = String(fc.step || (fc.max - fmin) / 100 || 0.01);
+        fRange.value = String((fmin + fc.max) / 2);
+        fLab.textContent = '对焦';
+        focusBox.style.display = 'flex';
+      } else {
+        focusCaps = null;
+        focusBox.style.display = 'none';
+      }
+      applyZoom(zMin);
+    }
+
+    zOut.onclick = function () { applyZoom(zoom - zStep); };
+    zIn.onclick = function () { applyZoom(zoom + zStep); };
+    fRange.oninput = function () {
+      fLab.textContent = '对焦';
+      applyFocus('manual');
+    };
+    fAuto.onclick = function () {
+      fLab.textContent = '自动';
+      applyFocus('continuous');
+    };
 
     function open(f) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -165,6 +275,7 @@
         settled = true;
         v.style.display = 'none';
         ctl.style.display = 'none';
+        tools.style.display = 'none';
         var tip = document.createElement('div');
         tip.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#999';
         tip.textContent = '网页相机 8 秒没响应，大概被设备策略拦住了。';
@@ -176,6 +287,9 @@
           settled = true;
           clearTimeout(guard);
           stream = st;
+          v.style.display = 'block';
+          tools.style.display = 'flex';
+          setupTrack(st);
           v.srcObject = st;
           return v.play();
         })
@@ -185,6 +299,7 @@
           var msg = e.name === 'NotAllowedError' ? '权限被拒绝' : (e.name === 'NotFoundError' ? '没有可用摄像头' : e.message);
           v.style.display = 'none';
           ctl.style.display = 'none';
+          tools.style.display = 'none';
           var tip = document.createElement('div');
           tip.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#999';
           tip.innerHTML = '无法打开相机：' + msg + '<br><span style="font-size:12px;opacity:.6">先在系统设置里允许本页摄像头权限，再重试</span>';
@@ -193,11 +308,14 @@
     }
 
     shot.onclick = function () {
-      if (!stream) return;
+      if (!stream || !v.videoWidth) return;
+      var zw = nativeZoom ? 1 : zoom;
+      var sw = v.videoWidth / zw, sh = v.videoHeight / zw;
+      var sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
       var c = document.createElement('canvas');
-      c.width = v.videoWidth;
-      c.height = v.videoHeight;
-      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      c.width = Math.max(1, Math.round(sw));
+      c.height = Math.max(1, Math.round(sh));
+      c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
       c.toBlob(function (b) { view(b, 'photo.png'); }, 'image/png');
     };
 
@@ -230,6 +348,13 @@
     flip.onclick = function () {
       facing = facing === 'environment' ? 'user' : 'environment';
       if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      stream = null;
+      track = null;
+      nativeZoom = false;
+      zoom = 1;
+      v.style.transform = '';
+      focusCaps = null;
+      focusBox.style.display = 'none';
       open(facing);
     };
 
@@ -238,6 +363,7 @@
       try { if (recorder && recorder.state === 'recording') recorder.stop(); } catch (e) {}
       if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
       stream = null;
+      track = null;
     }
     var obs = new MutationObserver(function () {
       if (!document.getElementById('__md')) { cleanup(); obs.disconnect(); }
