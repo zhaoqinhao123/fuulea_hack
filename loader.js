@@ -56,7 +56,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.0';
+  var TAG = '3.1';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -135,7 +135,7 @@
       ['💣 清空', 'mods/reset.js']
     ],
     'AI': [
-      ['🤖 AI 网页 · v3.0', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.1', 'mods/ai.js']
     ],
     '便签': []
   };
