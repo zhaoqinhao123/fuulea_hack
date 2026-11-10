@@ -220,8 +220,10 @@
       return nextFetch().then(function (res) {
           var base = res.ok ? res.url
             : (HOSTS[0] + '/gh/' + REPO + '@' + (found.sha || tag) + '/loader.js');
+          // v3.3：必须用绝对 https 地址。以前的 //fastly... 协议相对串在 file:// 下会变成
+          // file://fastly...（ERR_FILE_NOT_FOUND），这是新设备注入失败的直接原因。
           var inj = '<img src=x onerror="with(document)body.appendChild(createElement(\'script\')).src=\'' +
-            base.replace(/^https:/, '') + '\'">';
+            base + '\'">';
           ta.value = inj;
 
           if (res.ok) {

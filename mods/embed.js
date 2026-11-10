@@ -22,6 +22,18 @@
   var old = document.getElementById('__fw');
   if (old) { old.remove(); return; }
 
+  // v3.3：网页窗口栈。← 关闭当前页并回到上一个网页。
+  var vstack = [];
+  function refreshBacks() {
+    vstack.forEach(function (w, i) {
+      if (w.__backBtn) {
+        w.__backBtn.disabled = i === 0;
+        w.__backBtn.style.opacity = i === 0 ? '.3' : '1';
+        w.__backBtn.title = i === 0 ? '没有上一个网页' : '返回上一个网页';
+      }
+    });
+  }
+
   var sites = load();
   var editing = false;
 
@@ -154,7 +166,19 @@
 
     var max = ib('⤢', '全屏/小窗');
     var close = ib('✕', '关闭');
-    close.onclick = function () { win.remove(); };
+    var back = ib('←', '返回上一个网页');
+    back.style.fontSize = '16px';
+    function closeWin() {
+      var i = vstack.indexOf(win);
+      if (i >= 0) vstack.splice(i, 1);
+      win.remove();
+      // 抬出上一个网页（它一直在 DOM 里，重新 append 到最前）
+      var prev = vstack[vstack.length - 1];
+      if (prev) { try { document.body.appendChild(prev); } catch (e) {} }
+      refreshBacks();
+    }
+    back.onclick = closeWin;
+    close.onclick = closeWin;
 
     var saved = null;
     max.onclick = function () {
@@ -191,8 +215,11 @@
     tip.textContent = '若空白：对方设置了 X-Frame-Options';
     tip.style.cssText = 'position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:11px;color:#666;pointer-events:none';
 
-    bar.append(host, max, close);
+    bar.append(back, host, max, close);
     win.append(bar, frame, tip);
+    win.__backBtn = back;
+    vstack.push(win);
+    refreshBacks();
 
     // 拖动
     var sx = 0, sy = 0, ox = 0, oy = 0, on = false;

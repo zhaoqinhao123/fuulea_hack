@@ -22,10 +22,20 @@ pages:
   stage: deploy
   script:
     - mkdir -p public
-    - cp loader.js proxy.js README.md public/
+    - cp loader.js proxy.js README.md recover.html public/
     - cp -r mods tests public/
   artifacts:
     paths:
       - public
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# v3.3：管理员忘记 PIN 时手动重置（需在 CI/CD Variables 里配置
+# CONFIG_ID / NEW_PIN / ADMIN_KEY，建议 masked；GITLAB_TOKEN 需 api 写权限）
+reset-pin:
+  stage: deploy
+  image: node:20-alpine
+  when: manual
+  allow_failure: true
+  script:
+    - node tools/reset-pin.mjs
