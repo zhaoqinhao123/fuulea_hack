@@ -367,7 +367,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.1';
+  ver.textContent = 'v3.3';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -601,10 +601,36 @@
   var attachRetry = button('重试', 'ai-mini', '重新上传 GitLab');
   attachRetry.style.display = 'none';
   var attachRm = button('移除', 'ai-mini', '移除这张图片');
-  attach.append(attachImg, attachInfo, attachRetry, attachRm);
+  // v3.3：配置了 GitLab Token 才显示「上传至 GitLab 仓库」，勾选状态持久保存
+  var gitUpWrap = document.createElement('label');
+  gitUpWrap.style.cssText = 'display:none;align-items:center;gap:4px;font-size:10.5px;color:var(--dim);' +
+    'white-space:nowrap;flex-shrink:0;cursor:pointer';
+  var gitUp = document.createElement('input');
+  gitUp.type = 'checkbox';
+  gitUp.style.cssText = 'margin:0;width:12px;height:12px;accent-color:#5b8dfa';
+  var gitUpTxt = document.createElement('span');
+  gitUpTxt.textContent = '上传至 GitLab 仓库';
+  gitUpWrap.append(gitUp, gitUpTxt);
+  gitUp.onchange = function () {
+    cfg.autoUpload = !!gitUp.checked;
+    save(K_AUTO, cfg.autoUpload ? '1' : '0');
+    if (!pendingImage) return;
+    if (cfg.autoUpload && cfg.gitToken && pendingImage.state !== 'uploaded' &&
+      pendingImage.state !== 'uploading') {
+      uploadImage(pendingImage);
+    } else if (!cfg.autoUpload) {
+      if (uploadXhr) { try { uploadXhr.abort(); } catch (e) {} uploadXhr = null; }
+      if (pendingImage.state !== 'uploaded') {
+        pendingImage.state = 'off';
+        renderAttach();
+      }
+    }
+  };
+  attach.append(attachImg, attachInfo, gitUpWrap, attachRetry, attachRm);
+  renderAttach();
 
   var inputRow = div('ai-inputrow');
-  var photoBtn = button('📷', 'ai-ico ai-shot', '拍照 / 选图（自动上传 GitLab）');
+  var photoBtn = button('📷', 'ai-ico ai-shot', '拍照（网页相机）/ 选图（自动上传 GitLab）');
   var ta = document.createElement('textarea');
   ta.className = 'ai-ta';
   ta.placeholder = '问点什么…（Enter 发送 / Shift+Enter 换行）';
@@ -1327,6 +1353,7 @@
   var uploadXhr = null;
   var photoBusy = false;
   var closed = false;
+  var camStop = null;
 
   var photoIn = document.createElement('input');
   photoIn.type = 'file';
@@ -1365,7 +1392,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.1 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.3 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -1654,6 +1681,8 @@
   }
 
   function renderAttach() {
+    gitUpWrap.style.display = cfg.gitToken ? 'flex' : 'none';
+    gitUp.checked = !!cfg.autoUpload;
     if (!pendingImage) {
       attach.classList.remove('on');
       attachImg.removeAttribute('src');
@@ -1831,6 +1860,86 @@
       photoBusy = false;
       photoBtn.disabled = false;
     });
+  }
+
+  // v3.3 拍照：优先调用网页相机（getUserMedia），不支持时回退文件选择
+  function openCam() {
+    if (closed) return;
+    if (camStop) { try { camStop(); } catch (e) {} }
+    var ov = div('ai-cam');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column';
+    var v = document.createElement('video');
+    v.setAttribute('playsinline', '');
+    v.muted = true;
+    v.style.cssText = 'flex:1;min-height:0;width:100%;object-fit:contain;background:#000';
+    var bar = div('ai-cambar');
+    bar.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:10px;' +
+      'padding:10px 12px;background:#111';
+    var snap = button('📸 拍照', 'ai-send');
+    var flip = button('🔄 翻转', 'ai-mini');
+    var x = button('✕ 关闭', 'ai-mini');
+    bar.append(snap, flip, x);
+    ov.append(v, bar);
+    card.append(ov);
+
+    var stream = null, facing = 'environment', dead = false;
+    function stopCam() {
+      if (dead) return;
+      dead = true;
+      if (stream) {
+        stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+        stream = null;
+      }
+      if (camStop === stopCam) camStop = null;
+      ov.remove();
+    }
+    camStop = stopCam;
+    function fallbackPick() {
+      stopCam();
+      try { photoIn.removeAttribute('capture'); } catch (e) {}
+      photoIn.value = '';
+      try { photoIn.click(); } catch (e) { cfgMsg.textContent = '无法打开相机/文件选择器'; }
+    }
+    function startCam() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fallbackPick(); return; }
+      if (stream) {
+        stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+        stream = null;
+      }
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false })
+        .then(function (s) {
+          if (dead) {
+            s.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+            return;
+          }
+          stream = s;
+          v.srcObject = s;
+          var p = v.play();
+          if (p && p.catch) p.catch(function () {});
+        })
+        .catch(function () { fallbackPick(); });
+    }
+    function snapNow() {
+      if (!v.videoWidth || !v.videoHeight) { cfgMsg.textContent = '相机还没准备好'; return; }
+      var c = document.createElement('canvas');
+      c.width = v.videoWidth;
+      c.height = v.videoHeight;
+      try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); }
+      catch (e) { cfgMsg.textContent = '拍照失败：' + (e && e.message ? e.message : e); return; }
+      c.toBlob(function (blob) {
+        if (!blob) { cfgMsg.textContent = '拍照失败（无图像数据）'; return; }
+        var name = 'cam-' + stamp() + '.jpg';
+        var f;
+        try { f = new File([blob], name, { type: 'image/jpeg' }); }
+        catch (e) { f = blob; try { f.name = name; } catch (e2) {} }
+        stopCam();
+        handlePhoto(f);
+      }, 'image/jpeg', 0.92);
+    }
+    snap.onclick = snapNow;
+    flip.onclick = function () { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); };
+    x.onclick = stopCam;
+    startCam();
   }
 
   function addImageToBubble(bubble, dataUrl) {
@@ -2312,8 +2421,7 @@
   };
   photoBtn.onclick = function (e) {
     e.stopPropagation();
-    photoIn.value = '';
-    try { photoIn.click(); } catch (err) { cfgMsg.textContent = '无法打开相机/文件选择器'; }
+    openCam();
   };
   photoIn.onchange = function () {
     var f = photoIn.files && photoIn.files[0];
@@ -2343,6 +2451,7 @@
 
   function close() {
     closed = true;
+    if (camStop) { try { camStop(); } catch (e) {} camStop = null; }
     try { stop(); } catch (e) {}
     if (uploadXhr) { try { uploadXhr.abort(); } catch (e) {} uploadXhr = null; }
     try { document.removeEventListener('keydown', onKey); } catch (e) {}

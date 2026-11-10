@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.2.1';
+  var TAG = '3.3';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -234,34 +234,433 @@
     })();
   }
 
+  // ── v3.3 配置同步（加密存 GitLab；PIN 解锁；Token/管理员密钥可重置 PIN） ──
+  var CFG_PROJ = '88544686';
+  var CFG_BRANCH = 'main';
+  var CFG_DIR = 'config/';
+  var CFG_ID_KEY = 'fh:cfg:id';
+  var CFG_AT_KEY = 'fh:cfg:at';
+  var CFG_ADM_KEY = 'fh:cfg:admKey';
+  var CFG_ITER = 150000;
+
+  function cfgLs(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+  function cfgSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function cfgB64(buf) {
+    var b = new Uint8Array(buf), s = '';
+    for (var i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+    return btoa(s);
+  }
+  function cfgUnb64(s) {
+    var bin = atob(String(s || '')), u = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return u;
+  }
+  function cfgBytes(n) { var u = new Uint8Array(n); crypto.getRandomValues(u); return u; }
+  function cfgNewId() {
+    var abc = 'abcdefghijklmnopqrstuvwxyz0123456789', s = 'u', r = cfgBytes(10);
+    for (var i = 0; i < 10; i++) s += abc.charAt(r[i] % abc.length);
+    return s;
+  }
+  function cfgReady() {
+    return !!(window.crypto && crypto.subtle && crypto.subtle.deriveKey && window.TextEncoder);
+  }
+  function cfgKdf(pass, saltB64) {
+    return crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey'])
+      .then(function (base) {
+        return crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: cfgUnb64(saltB64), iterations: CFG_ITER, hash: 'SHA-256' },
+          base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      });
+  }
+  function cfgEnc(key, obj) {
+    var iv = cfgBytes(12);
+    return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key,
+      new TextEncoder().encode(JSON.stringify(obj)))
+      .then(function (ct) { return cfgB64(iv) + '.' + cfgB64(ct); });
+  }
+  function cfgDec(key, s) {
+    var p = String(s || '').split('.');
+    if (p.length !== 2) return Promise.reject(new Error('bad cipher'));
+    return crypto.subtle.decrypt({ name: 'AES-GCM', iv: cfgUnb64(p[0]) }, key, cfgUnb64(p[1]))
+      .then(function (pt) { return JSON.parse(new TextDecoder().decode(pt)); });
+  }
+  function cfgImport(rawB64) {
+    return crypto.subtle.importKey('raw', cfgUnb64(rawB64), 'AES-GCM', true, ['encrypt', 'decrypt']);
+  }
+  function cfgExport(key) { return crypto.subtle.exportKey('raw', key).then(cfgB64); }
+  function cfgPinOk(p) { return /^[^\s]{6,30}$/.test(String(p || '')); }
+  function cfgExcluded(k) {
+    if (k.indexOf('fh:') !== 0) return true;
+    if (k === 'fh:ai:key' || k === 'fh:ai:gitToken' || k === 'fh:ai:sessions' || k === 'fh:ai:sid') return true;
+    if (k === 'fh:ai:roomCache' || k === 'fh:cmdhist') return true;
+    if (k === CFG_ID_KEY || k === CFG_AT_KEY || k === CFG_ADM_KEY) return true;
+    if (k.indexOf('fh:ai:hist:') === 0 || k.indexOf('fh:mod:') === 0) return true;
+    return false;
+  }
+  function cfgCollect() {
+    var out = {};
+    try {
+      Object.keys(localStorage).forEach(function (k) {
+        if (cfgExcluded(k)) return;
+        out[k] = localStorage.getItem(k);
+      });
+    } catch (e) {}
+    return out;
+  }
+  function cfgApply(keys) {
+    var n = 0;
+    Object.keys(keys || {}).forEach(function (k) {
+      if (cfgExcluded(k)) return;
+      try { localStorage.setItem(k, String(keys[k])); n++; } catch (e) {}
+    });
+    return n;
+  }
+  function cfgUrl(p) {
+    return 'https://gitlab.com/api/v4/projects/' + CFG_PROJ + '/repository/files/' +
+      encodeURIComponent(p) + '/raw?ref=' + CFG_BRANCH + '&t=' + Date.now();
+  }
+  function cfgReq(method, url, text, token) {
+    return new Promise(function (resolve) {
+      var x = new XMLHttpRequest();
+      x.open(method, url, true);
+      x.timeout = 20000;
+      if (token) x.setRequestHeader('PRIVATE-TOKEN', token);
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.onload = function () {
+        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: x.responseText || '' });
+      };
+      x.onerror = x.ontimeout = function () { resolve({ ok: false, status: 0, text: 'network' }); };
+      x.send(text || null);
+    });
+  }
+  function cfgList() {
+    var url = 'https://gitlab.com/api/v4/projects/' + CFG_PROJ + '/repository/tree?path=config&ref=' +
+      CFG_BRANCH + '&per_page=100&t=' + Date.now();
+    return cfgReq('GET', url).then(function (r) {
+      var arr = [];
+      if (!r.ok) return arr;
+      try {
+        JSON.parse(r.text).forEach(function (it) {
+          if (it && it.type === 'blob' && /^config\/[^\/]+\.json$/.test(it.path)) arr.push(it.path);
+        });
+      } catch (e) {}
+      return arr;
+    });
+  }
+  function cfgGet(path) {
+    return cfgReq('GET', cfgUrl(path)).then(function (r) {
+      if (!r.ok) return null;
+      try { return JSON.parse(r.text); } catch (e) { return null; }
+    });
+  }
+  function cfgPut(path, obj, token) {
+    var body = JSON.stringify({
+      branch: CFG_BRANCH,
+      content: JSON.stringify(obj, null, 2),
+      encoding: 'text',
+      commit_message: 'config ' + obj.id + ' @ ' + new Date().toISOString()
+    });
+    var u = 'https://gitlab.com/api/v4/projects/' + CFG_PROJ + '/repository/files/' + encodeURIComponent(path);
+    return cfgReq('PUT', u, body, token).then(function (r) {
+      if (r.ok) return r;
+      return cfgReq('POST', u, body, token).then(function (r2) {
+        if (r2.ok) return r2;
+        return cfgReq('PUT', u, body, token);
+      });
+    });
+  }
+  function cfgBtn(t, bg) {
+    var b = document.createElement('button');
+    b.textContent = t;
+    b.style.cssText = 'height:32px;padding:0 12px;border:1px solid #3a3a42;border-radius:8px;background:' +
+      (bg || '#26262e') + ';color:#dcdce6;font:12px/1 inherit;cursor:pointer';
+    return b;
+  }
+  function cfgDialog(title) {
+    var old = document.getElementById('__fhcfg');
+    if (old) old.remove();
+    var ov = document.createElement('div');
+    ov.id = '__fhcfg';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(8,8,10,.74);' +
+      'display:flex;align-items:center;justify-content:center;padding:16px;' +
+      'font:13px/1.5 -apple-system,"PingFang SC",sans-serif';
+    var box = document.createElement('div');
+    box.style.cssText = 'width:min(390px,94vw);max-height:88vh;overflow:auto;background:#1c1c22;' +
+      'border:1px solid #3a3a42;border-radius:14px;padding:14px;color:#ddd;' +
+      'box-shadow:0 24px 70px rgba(0,0,0,.6)';
+    var h = document.createElement('div');
+    h.textContent = title;
+    h.style.cssText = 'font-weight:700;font-size:14px;color:#eee;margin-bottom:10px';
+    var body = document.createElement('div');
+    body.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+    var stat = document.createElement('div');
+    stat.style.cssText = 'min-height:16px;font-size:11.5px;color:#8a8a99;word-break:break-all;margin-top:8px';
+    box.append(h, body, stat);
+    ov.append(box);
+    ov.onclick = function (e) { if (e.target === ov) ov.remove(); };
+    document.body.append(ov);
+    return { ov: ov, body: body, stat: stat, close: function () { ov.remove(); } };
+  }
+  function cfgField(box, label, opt) {
+    var l = document.createElement('label');
+    l.style.cssText = 'display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:#9a9aa8';
+    var sp = document.createElement('span');
+    sp.textContent = label;
+    var inp = document.createElement('input');
+    inp.type = (opt && opt.type) || 'text';
+    inp.style.cssText = 'height:32px;padding:0 9px;border:1px solid #3a3a42;border-radius:8px;' +
+      'background:#141419;color:#e6e6ee;font:12.5px/1 inherit;outline:none';
+    l.append(sp, inp);
+    box.append(l);
+    return inp;
+  }
+
+  function uploadConfig() {
+    if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
+    var hasId = !!cfgLs(CFG_ID_KEY);
+    var d = cfgDialog(hasId ? '⬆ 上传配置（更新云端）' : '⬆ 上传配置（首次）');
+    if (hasId) {
+      var tip = document.createElement('div');
+      tip.style.cssText = 'font-size:11.5px;color:#8a8a99';
+      tip.textContent = '配置 ID：' + cfgLs(CFG_ID_KEY) + '（用 PIN 解密云端 Token）';
+      d.body.append(tip);
+    }
+    var tIn = cfgField(d.body, hasId ? 'GitLab Token（可留空，用 PIN 解出的 Token）' : 'GitLab Token（写权限；仅本次使用，之后用 PIN 代替）', { type: 'password' });
+    var pin = cfgField(d.body, 'PIN（6-30 位，字母/数字/符号）', { type: 'password' });
+    var pin2 = hasId ? null : cfgField(d.body, '再输一次 PIN', { type: 'password' });
+    var adm = cfgField(d.body, '管理员密钥（可选，忘记 PIN 时用）', { type: 'password' });
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+    var okBtn = cfgBtn('开始上传', '#3a6df0');
+    var cancel = cfgBtn('取消');
+    row.append(okBtn, cancel);
+    d.body.append(row);
+    cancel.onclick = d.close;
+
+    okBtn.onclick = async function () {
+      var p = pin.value.trim();
+      if (!cfgPinOk(p)) { d.stat.textContent = 'PIN 需 6-30 位且不含空格'; return; }
+      if (pin2 && pin2.value.trim() !== p) { d.stat.textContent = '两次 PIN 不一致'; return; }
+      var id = hasId ? cfgLs(CFG_ID_KEY) : cfgNewId();
+      var path = CFG_DIR + id + '.json';
+      var salt, dk, tok;
+      if (hasId) {
+        var t0 = tIn ? tIn.value.trim() : '';
+        if (t0) tok = t0;
+        d.stat.textContent = '读取云端配置…';
+        var old = await cfgGet(path);
+        if (!old || !old.kdf || !old.wrapPin) { d.stat.textContent = '云端配置不存在，或已被删除（可清掉本机 fh:cfg:id 后重新首次上传）'; return; }
+        salt = old.kdf.salt;
+        try {
+          var k = await cfgKdf('pin|' + id + '|' + p, salt);
+          var raw = await cfgDec(k, old.wrapPin);
+          dk = await cfgImport(raw);
+          var bx = await cfgDec(dk, old.box);
+          if (!tok) tok = bx.tok || '';
+        } catch (e) { d.stat.textContent = 'PIN 不正确'; return; }
+        if (!tok) { d.stat.textContent = '没有可用的 Token（请在下方填一个）'; return; }
+      } else {
+        tok = tIn.value.trim();
+        if (!tok) { d.stat.textContent = '请填 GitLab Token'; return; }
+        salt = cfgB64(cfgBytes(16));
+        dk = await cfgImport(cfgB64(cfgBytes(32)));
+      }
+      d.stat.textContent = '加密并上传…';
+      okBtn.disabled = true;
+      var dkRaw = await cfgExport(dk);
+      var keys = cfgCollect();
+      var now = new Date().toISOString();
+      var payload = {
+        v: 1, at: now, tag: TAG, id: id,
+        kdf: { salt: salt, iter: CFG_ITER },
+        hint: cfgLs('fh:ai:nick') || 'fuulea_hack',
+        wrapPin: await cfgEnc(await cfgKdf('pin|' + id + '|' + p, salt), dkRaw),
+        wrapTok: await cfgEnc(await cfgKdf('tok|' + id + '|' + tok, salt), dkRaw),
+        box: await cfgEnc(dk, { tok: tok, keys: keys })
+      };
+      var ak = adm.value.trim() || cfgLs(CFG_ADM_KEY);
+      if (ak) payload.wrapAdm = await cfgEnc(await cfgKdf('adm|' + id + '|' + ak, salt), dkRaw);
+      if (hasId) {
+        var prev = await cfgGet(path);
+        if (prev && prev.wrapAdm && !ak) payload.wrapAdm = prev.wrapAdm;
+      }
+      var r = await cfgPut(path, payload, tok);
+      okBtn.disabled = false;
+      if (!r.ok) {
+        d.stat.textContent = '上传失败（' + (r.status || '网络') + '）：' + (r.text || '').replace(/\s+/g, ' ').slice(0, 140);
+        return;
+      }
+      cfgSet(CFG_ID_KEY, id);
+      cfgSet(CFG_AT_KEY, now);
+      if (ak) cfgSet(CFG_ADM_KEY, ak);
+      d.stat.textContent = '✅ 已上传 ' + Object.keys(keys).length + ' 项配置（ID ' + id + '）';
+      fhToast('⬆ 配置已上传到云端');
+      setTimeout(d.close, 1000);
+    };
+  }
+
+  function pullConfig() {
+    if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
+    var d = cfgDialog('⬇ 更新配置（从云端恢复）');
+    var pin = cfgField(d.body, 'PIN', { type: 'password' });
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+    var okBtn = cfgBtn('恢复', '#3a6df0');
+    var forgot = cfgBtn('忘记 PIN');
+    var cancel = cfgBtn('取消');
+    row.append(okBtn, forgot, cancel);
+    d.body.append(row);
+    cancel.onclick = d.close;
+    forgot.onclick = function () { d.close(); resetPinDialog(); };
+
+    okBtn.onclick = async function () {
+      var p = pin.value.trim();
+      if (!p) { d.stat.textContent = '请输入 PIN'; return; }
+      okBtn.disabled = true;
+      d.stat.textContent = '读取云端配置列表…';
+      var files = await cfgList();
+      if (!files.length) { okBtn.disabled = false; d.stat.textContent = '云端暂无配置'; return; }
+      for (var i = 0; i < files.length; i++) {
+        d.stat.textContent = '尝试 ' + (i + 1) + '/' + files.length + '：' + files[i];
+        var o = await cfgGet(files[i]);
+        if (!o || !o.kdf || !o.wrapPin || !o.box) continue;
+        try {
+          var k = await cfgKdf('pin|' + o.id + '|' + p, o.kdf.salt);
+          var raw = await cfgDec(k, o.wrapPin);
+          var dk = await cfgImport(raw);
+          var bx = await cfgDec(dk, o.box);
+          var n = cfgApply(bx.keys);
+          if (bx.tok) cfgSet('fh:ai:gitToken', bx.tok);
+          cfgSet(CFG_ID_KEY, o.id);
+          cfgSet(CFG_AT_KEY, o.at || new Date().toISOString());
+          d.stat.textContent = '✅ 已恢复 ' + n + ' 项配置（ID ' + o.id + '）';
+          fhToast('⬇ 配置已恢复（' + n + ' 项）');
+          setTimeout(d.close, 1000);
+          return;
+        } catch (e) {}
+      }
+      okBtn.disabled = false;
+      d.stat.textContent = 'PIN 不正确，或云端没有对应的配置';
+    };
+  }
+
+  function resetPinDialog() {
+    var d = cfgDialog('🔑 重置 PIN（忘记 PIN 时）');
+    var idIn = cfgField(d.body, '配置 ID（留空则遍历云端全部配置）');
+    if (cfgLs(CFG_ID_KEY)) idIn.value = cfgLs(CFG_ID_KEY);
+    var tokIn = cfgField(d.body, 'GitLab Token（写权限，用于更新文件）', { type: 'password' });
+    var admIn = cfgField(d.body, '管理员密钥（可选，与 Token 二选一解包）', { type: 'password' });
+    var pin = cfgField(d.body, '新 PIN', { type: 'password' });
+    var pin2 = cfgField(d.body, '再输一次新 PIN', { type: 'password' });
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+    var okBtn = cfgBtn('重置 PIN', '#3a6df0');
+    var back = cfgBtn('返回');
+    var cancel = cfgBtn('取消');
+    row.append(okBtn, back, cancel);
+    d.body.append(row);
+    cancel.onclick = d.close;
+    back.onclick = function () { d.close(); pullConfig(); };
+
+    okBtn.onclick = async function () {
+      var np = pin.value.trim();
+      if (!cfgPinOk(np)) { d.stat.textContent = '新 PIN 需 6-30 位且不含空格'; return; }
+      if (pin2.value.trim() !== np) { d.stat.textContent = '两次 PIN 不一致'; return; }
+      var tok = tokIn.value.trim() || cfgLs('fh:ai:gitToken');
+      var ak = admIn.value.trim() || cfgLs(CFG_ADM_KEY);
+      if (!tok && !ak) { d.stat.textContent = '请填 Token 或管理员密钥'; return; }
+      okBtn.disabled = true;
+      var files = idIn.value.trim() ? [CFG_DIR + idIn.value.trim().replace(/^config\//, '').replace(/\.json$/, '') + '.json'] : await cfgList();
+      if (!files.length) { okBtn.disabled = false; d.stat.textContent = '云端暂无配置'; return; }
+      for (var i = 0; i < files.length; i++) {
+        d.stat.textContent = '尝试 ' + (i + 1) + '/' + files.length + '：' + files[i];
+        var o = await cfgGet(files[i]);
+        if (!o || !o.kdf) continue;
+        var raw = null;
+        if (tok && o.wrapTok) {
+          try { raw = await cfgDec(await cfgKdf('tok|' + o.id + '|' + tok, o.kdf.salt), o.wrapTok); } catch (e) {}
+        }
+        if (!raw && ak && o.wrapAdm) {
+          try { raw = await cfgDec(await cfgKdf('adm|' + o.id + '|' + ak, o.kdf.salt), o.wrapAdm); } catch (e) {}
+        }
+        if (!raw || !o.box) continue;
+        var dk = await cfgImport(raw);
+        var writeTok = tok;
+        if (!writeTok) { d.stat.textContent = '解包成功，但更新文件还需要 GitLab Token'; okBtn.disabled = false; return; }
+        var npayload = {
+          v: o.v || 1, at: new Date().toISOString(), tag: o.tag || TAG, id: o.id,
+          kdf: o.kdf, hint: o.hint || 'fuulea_hack',
+          wrapPin: await cfgEnc(await cfgKdf('pin|' + o.id + '|' + np, o.kdf.salt), raw),
+          wrapTok: o.wrapTok || null,
+          wrapAdm: o.wrapAdm || null,
+          box: o.box
+        };
+        var r = await cfgPut(files[i], npayload, writeTok);
+        if (!r.ok) { okBtn.disabled = false; d.stat.textContent = '重置失败（' + (r.status || '网络') + '）：' + (r.text || '').slice(0, 120); return; }
+        if (ak) cfgSet(CFG_ADM_KEY, ak);
+        d.stat.textContent = '✅ PIN 已重置（ID ' + o.id + '），现在可用新 PIN 恢复';
+        fhToast('🔑 PIN 已重置');
+        setTimeout(d.close, 1200);
+        return;
+      }
+      okBtn.disabled = false;
+      d.stat.textContent = 'Token / 管理员密钥都不匹配，或云端没有对应配置';
+    };
+  }
+
+  function cfgStartupProbe() {
+    try {
+      if (cfgLs(CFG_AT_KEY)) return;
+      if (sessionStorage.getItem('fh:cfg:probe')) return;
+      sessionStorage.setItem('fh:cfg:probe', '1');
+    } catch (e) { return; }
+    if (!cfgReady()) return;
+    cfgList().then(function (files) {
+      if (!files.length) return;
+      var t = document.createElement('div');
+      t.id = '__fhcfgtoast';
+      t.style.cssText = 'position:fixed;left:50%;bottom:70px;transform:translateX(-50%);z-index:2147483647;' +
+        'background:linear-gradient(180deg,#2b2b36,#1d1d26);color:#dcdce6;border:1px solid #3d3d4a;' +
+        'padding:10px 14px;border-radius:12px;font:12.5px/1.4 -apple-system,"PingFang SC",sans-serif;' +
+        'cursor:pointer;box-shadow:0 12px 36px rgba(0,0,0,.5)';
+      t.textContent = '☁ 云端有 ' + files.length + ' 份配置，点此输入 PIN 恢复';
+      t.onclick = function () { t.remove(); pullConfig(); };
+      document.body.append(t);
+      setTimeout(function () { if (t.parentNode) t.remove(); }, 20000);
+    });
+  }
+
   var GROUPS = {
     '学习': [
+      ['✏️ 改名', 'mods/rename.js'],
       ['💰 积分', 'mods/score.js'],
       ['🐾 灵宠', 'mods/pets.js'],
       ['🖼 宠物图', 'mods/petimg.js'],
       ['➕ 加宠物', 'mods/petmax.js'],
       ['🔓 解锁4只', 'mods/unlock.js']
     ],
-    '查看': [
-      ['🔒 遮罩', 'mods/peek.js'],
+    '工具': [
       ['🌐 网页', 'mods/embed.js'],
+      ['📷 相机', 'mods/media.js'],
+      ['📂 文件', 'mods/browser.js'],
       ['📖 小说', 'mods/novel.js'],
       ['🎵 音乐', 'mods/music.js'],
       ['🖼 图片', 'mods/img.js'],
       ['🧩 转印', 'mods/tile.js'],
-      ['📦 存档', 'mods/dump.js']
-    ],
-    '工具': [
+      ['📦 存档', 'mods/dump.js'],
+      ['🔒 遮罩', 'mods/peek.js'],
       ['📝 名单', 'mods/edit.js'],
-      ['✏️ 改名', 'mods/rename.js'],
       ['🧹 清答案', 'mods/clean.js'],
-      ['📂 文件', 'mods/browser.js'],
-      ['📷 相机', 'mods/media.js'],
+      ['⬆ 上传配置', uploadConfig],
+      ['⬇ 更新配置', pullConfig],
       ['⏱ 解除限时', toggleLockFree],
       ['💣 清空', 'mods/reset.js']
     ],
-    'AI': [
-      ['🤖 AI 网页 · v3.1', 'mods/ai.js']
+    'chat': [
+      ['🤖 AI 网页 · v3.3', 'mods/ai.js']
+    ],
+    '白板': [
+      ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
     ],
     '便签': []
   };
@@ -592,6 +991,7 @@
   document.body.append(root);
   window.__fhAt = Date.now();
   show('学习');
+  setTimeout(cfgStartupProbe, 1500);
 
   // 拖动（小窗态不拖）
   var dragMoved = false;

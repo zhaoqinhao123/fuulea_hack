@@ -35,6 +35,51 @@
     return b;
   }
 
+  // ── v3.3：上传到 GitLab（复用 AI 网页的 Token / 仓库 / media 目录） ──
+  function mediaExt(blob, name) {
+    var t = String(blob.type || '');
+    if (t.indexOf('video/') === 0) return /mp4/.test(t) ? '.mp4' : '.webm';
+    if (/png/.test(t)) return '.png';
+    if (/webp/.test(t)) return '.webp';
+    if (/gif/.test(t)) return '.gif';
+    if (/\/(mp4|webm)\//.test(t)) return /mp4/.test(t) ? '.mp4' : '.webm';
+    return '.jpg';
+  }
+  function uploadToGit(blob, name, token, cb) {
+    var path = 'media/' + Date.now() + '-' + Math.floor(Math.random() * 9000 + 1000) + mediaExt(blob, name);
+    var r = new FileReader();
+    r.onload = function () {
+      var b64 = String(r.result || '').split(',')[1] || '';
+      if (!b64) return cb('读取文件失败');
+      var body = JSON.stringify({
+        branch: 'main', content: b64, encoding: 'base64',
+        commit_message: 'upload media ' + path.replace(/^media\//, '')
+      });
+      var x = new XMLHttpRequest();
+      var url = 'https://gitlab.com/api/v4/projects/' +
+        encodeURIComponent('yq-group2/fuulea_ai_repository') + '/repository/files/' +
+        encodeURIComponent(path);
+      x.open('POST', url, true);
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.setRequestHeader('PRIVATE-TOKEN', String(token || '').trim());
+      x.timeout = 60000;
+      x.onload = function () {
+        if (x.status >= 200 && x.status < 300) return cb(null, path);
+        if (x.status === 400 && /already exists/i.test(x.responseText || '')) {
+          return uploadToGit(blob, name, token, cb);
+        }
+        var detail = '';
+        try { var j = JSON.parse(x.responseText || '{}'); detail = j.message || ''; } catch (e) {}
+        cb('HTTP ' + x.status + (detail ? ' ' + detail : ''));
+      };
+      x.onerror = function () { cb('网络/CORS 错误'); };
+      x.ontimeout = function () { cb('上传超时'); };
+      x.send(body);
+    };
+    r.onerror = function () { cb('读取文件失败'); };
+    r.readAsDataURL(blob);
+  }
+
   // ── 查看器：图片 / 视频 ──
   function view(blob, name) {
     var s = shell(name || '预览');
@@ -77,6 +122,35 @@
     };
     s.bar.insertBefore(share, s.bar.lastChild);
     s.bar.insertBefore(save, s.bar.lastChild);
+
+    // v3.3：设置过 GitLab Token 时，显示「上传至 GitLab 仓库」
+    var gitToken = '';
+    try { gitToken = localStorage.getItem('fh:ai:gitToken') || ''; } catch (e) {}
+    if (gitToken.trim()) {
+      var up = document.createElement('button');
+      up.textContent = '⬆';
+      up.title = '上传至 GitLab 仓库';
+      up.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:17px;cursor:pointer';
+      var upBusy = false;
+      up.onclick = function () {
+        if (upBusy) return;
+        upBusy = true;
+        up.textContent = '…';
+        up.title = '上传中…';
+        uploadToGit(blob, name, gitToken, function (err, path) {
+          upBusy = false;
+          if (err) {
+            up.textContent = '⚠';
+            up.title = '上传失败：' + err;
+            alert('上传失败：' + err + '\n\n可到 AI 网页 → 🔑 设置里检查 GitLab Token');
+            return;
+          }
+          up.textContent = '✅';
+          up.title = '已上传：' + path;
+        });
+      };
+      s.bar.insertBefore(up, s.bar.lastChild);
+    }
 
     if (/^video\//.test(blob.type) || /\.(mp4|mov|webm|m4v)$/i.test(name || '')) {
       var v = document.createElement('video');
