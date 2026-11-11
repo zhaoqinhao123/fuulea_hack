@@ -81,14 +81,25 @@
     try { return cleanHist(JSON.parse(localStorage.getItem(K_HIST_P + id) || '[]')); } catch (e) { return []; }
   }
 
-  // 不同 Token 视为不同用户：会话、昵称、相册都按 owner 隔离；聊天室（共享仓库）不隔离
+  // 不同身份：优先用登录账号（用户名 + PIN），其次回退旧 Key / Token 哈希
   function hash8(s) {
     s = String(s);
     var h = 5381;
     for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
     return ('0000000' + h.toString(16)).slice(-8);
   }
+  function acctRec() {
+    try { if (window.__fhAcct && window.__fhAcct.cur) return window.__fhAcct.cur(); } catch (e) {}
+    return null;
+  }
+  function acctUid() {
+    var r = acctRec();
+    if (!r || !r.user) return '';
+    try { return 'u' + (window.__fhAcct.userKey ? window.__fhAcct.userKey(r.user) : hash8(String(r.user).toLowerCase())); } catch (e) { return ''; }
+  }
   function computeOwner() {
+    var u = acctUid();
+    if (u) return u;
     var t = String(cfg.gitToken || '').trim();
     var k = String(cfg.key || '').trim();
     return k ? 'k' + hash8(k) : (t ? 'g' + hash8(t) : 'local');
@@ -367,7 +378,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.3';
+  ver.textContent = 'v3.4';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -378,11 +389,12 @@
   var galBtn = button('🖼', 'ai-ico', '相册');
   var roomBtn = button('💬', 'ai-ico', '聊天室（共享）');
   var probeBtn = button('📡', 'ai-ico', '探测 / 缓存');
+  var acctBtn = button('👤', 'ai-ico', '账号（用户名 + PIN）');
   var cfgBtn = button('🔑', 'ai-ico', 'API Key / 设置');
   var fullBtn = button('⛶', 'ai-ico', '全屏');
   var themeBtn = button('🌓', 'ai-ico ai-themebtn', '主题');
   var closeBtn = button('✕', 'ai-ico ai-close', '关闭');
-  head.append(logo, title, badge, spacer, dot, newBtn, sessBtn, galBtn, roomBtn, probeBtn, cfgBtn, fullBtn, themeBtn, closeBtn);
+  head.append(logo, title, badge, spacer, dot, newBtn, sessBtn, galBtn, roomBtn, probeBtn, acctBtn, cfgBtn, fullBtn, themeBtn, closeBtn);
 
   // 设置抽屉
   var cfgBox = div('ai-cfg');
@@ -468,6 +480,7 @@
     return {
       row: row,
       get: function () { return value; },
+      set: function (v) { value = String(v || ''); editing = false; paint(); },
       begin: begin,
       cancel: cancel,
       focus: function () { try { inp.focus(); } catch (e) {} }
@@ -477,10 +490,12 @@
   var keyField = makeSecretRow('API Key', cfg.key, 'sk-...（只存本机）', function (v) {
     cfg.key = v;
     save(K_KEY, v);
+    try { if (window.__fhAcct && window.__fhAcct.saveKey) window.__fhAcct.saveKey(v); } catch (e) {}
     rebindOwner();
     setDot();
     setStat();
-    cfgMsg.textContent = 'Key 已保存到本机（之后只显示掩码）· 用户隔离：' + ownerTag;
+    paintAcct();
+    cfgMsg.textContent = 'Key 已保存到本机（之后只显示掩码）· 用户隔离：' + ownerTag + (acctUid() ? '（账号）' : '');
   });
 
   var baseRow = div('ai-row');
@@ -497,10 +512,96 @@
   var gitField = makeSecretRow('上传 Token', cfg.gitToken, 'GitLab Token（可选）', function (v) {
     cfg.gitToken = v;
     save(K_GIT, v);
+    try { if (window.__fhAcct && window.__fhAcct.saveGit) window.__fhAcct.saveGit(v); } catch (e) {}
     rebindOwner();
     renderAttach();
+    paintAcct();
     cfgMsg.textContent = v ? 'Token 已保存，拍照后会自动上传 GitLab media/' : '已清除上传 Token';
   });
+
+  // 账号：用户名 + PIN，本机持久；AI Key / Token / 网页配置跟着账号走
+  var acctRow = div('ai-row');
+  var acctLab = document.createElement('label');
+  acctLab.textContent = '账号';
+  var acctVal = div('ai-in');
+  acctVal.style.cssText = 'display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;' +
+    'white-space:nowrap;color:#9a9aa8;flex:1;min-width:0';
+  var acctGo = button('登录', 'ai-mini');
+  acctRow.append(acctLab, acctVal, acctGo);
+
+  function paintAcct() {
+    var r = acctRec();
+    if (r) {
+      acctVal.textContent = r.user;
+      acctVal.title = r.gitToken ? 'AI Key / Token 已保存到账号' : '已登录（还没保存上传 Token）';
+      acctGo.textContent = '退出';
+    } else {
+      acctVal.textContent = '未登录';
+      acctVal.title = '登录后 AI Key / Token / 网页配置跟着账号保存';
+      acctGo.textContent = '登录';
+    }
+    acctGo.onclick = function (e) {
+      e.stopPropagation();
+      if (r) {
+        if (!confirm('退出当前账号？登录状态会清掉，账号里的配置仍保存在本机。')) return;
+        try { if (window.__fhAcct && window.__fhAcct.logout) window.__fhAcct.logout(); } catch (e2) {}
+      } else {
+        openAcct();
+      }
+    };
+  }
+  function openAcct(after) {
+    try {
+      if (window.__fhAcct && window.__fhAcct.open) { window.__fhAcct.open(after); return; }
+    } catch (e) {}
+    cfgMsg.textContent = '账号功能未就绪（请刷新页面）';
+  }
+
+  function migrateMedia(oldOwner, newOwner) {
+    try {
+      dbAll().then(function (all) {
+        (all || []).forEach(function (m) {
+          if (m && m.owner === oldOwner) { m.owner = newOwner; dbPut(m); }
+        });
+      });
+    } catch (e) {}
+  }
+  function acctSync() {
+    var old = ownerTag;
+    cfg.key = read(K_KEY, '');
+    cfg.gitToken = read(K_GIT, '');
+    keyField.set(cfg.key);
+    gitField.set(cfg.gitToken);
+    var n = computeOwner();
+    if (n !== old) {
+      if (n !== 'local') {
+        sessions.forEach(function (s) { if (!s.owner || s.owner === 'local' || s.owner === old) s.owner = n; });
+        migrateMedia(old, n);
+      }
+      ownerTag = n;
+      saveSessions();
+      var cur = sessionById(sid);
+      if (!cur || cur.owner !== n) {
+        var mine = sessions.filter(function (s) { return s.owner === n; });
+        sid = mine.length ? mine[0].id : '';
+        save(K_SID, sid);
+        history = sid ? readHist(sid) : [];
+        renderHistory();
+      }
+      renderSessList();
+    }
+    renderAttach();
+    setDot();
+    setStat();
+    paintAcct();
+    try {
+      var ar = acctRec();
+      acctBtn.style.color = ar ? '#6f9bff' : '';
+      acctBtn.title = ar ? ('账号：' + ar.user) : '账号（用户名 + PIN）';
+    } catch (e) {}
+  }
+  try { window.addEventListener('fh:acct', acctSync); } catch (e) {}
+  paintAcct();
 
   var autoRow = div('ai-check');
   var autoIn = document.createElement('input');
@@ -583,7 +684,7 @@
 
   var hint = div('ai-hint', 'Key / Token 只存本机；图片上传到 ' + GIT_PROJ + ':' + GIT_BRANCH + '/media/。');
   var cfgMsg = div('ai-cfgmsg', '');
-  cfgBox.append(keyField.row, baseRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
+  cfgBox.append(acctRow, keyField.row, baseRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
 
   // 对话区
   var msgs = div('ai-msgs');
@@ -1177,8 +1278,12 @@
     if (!roomInput || roomBusy) return;
     var text = String(roomInput.value || '').trim();
     if (!text) { try { roomInput.focus(); } catch (e) {} return; }
+    if (!acctRec()) {
+      roomOv.tit.textContent = '聊天室需要先登录账号（点 👤 用户名 + PIN）';
+      return;
+    }
     if (!cfg.gitToken) {
-      roomOv.tit.textContent = '聊天室需要先填「上传 Token」（点 🔑）';
+      roomOv.tit.textContent = '聊天室需要先在 🔑 里保存「上传 Token」';
       return;
     }
     var nick = String((roomNick && roomNick.value) || cfg.nick || ('用户' + ownerTag.slice(-4))).trim().slice(0, 20);
@@ -1392,7 +1497,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.3 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.4 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -1409,7 +1514,9 @@
     empty.append(div('b', '🤖 DeepSeek V4.1 Flash'));
     empty.append(div('p', cfg.key
       ? '直接提问。Key 只保存在本机，不经过第三方服务器。'
-      : '在上方 🔑 填 API Key，然后直接提问。Key 只保存在本机，不经过第三方服务器。'));
+      : (acctRec()
+        ? '在上方 🔑 填 API Key，然后直接提问。'
+        : '先点 👤 登录（用户名 + PIN），再填 API Key；Key / Token 跟着账号保存。')));
     var chips = div('ai-chips');
     [
       ['总结一段话', '帮我用三句话总结下面这段话：\n'],
@@ -2470,6 +2577,9 @@
   }
   closeBtn.onclick = close;
   shade.onclick = close;
+  acctBtn.onclick = function (e) { e.stopPropagation(); openAcct(); };
+  acctBtn.style.color = acctRec() ? '#6f9bff' : '';
+  acctBtn.title = acctRec() ? ('账号：' + acctRec().user) : '账号（用户名 + PIN）';
   document.addEventListener('keydown', onKey);
   window.__fhAIStop = stop;
 
@@ -2483,7 +2593,10 @@
 
   if (!cfg.key) {
     openCfg(true);
-    cfgMsg.textContent = '首次使用：输入 API Key 后点“保存”，之后只显示掩码。';
+    cfgMsg.textContent = acctRec()
+      ? '已登录：输入 API Key 后点“保存”，之后只显示掩码，Key 会归到当前账号。'
+      : '首次使用：先点上方 👤 登录（用户名 + PIN），AI Key / Token 会跟着账号保存。';
+    if (!acctRec()) setTimeout(function () { openAcct(); }, 220);
   } else {
     setTimeout(function () { ta.focus(); }, 80);
   }

@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.3';
+  var TAG = '3.4';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -293,6 +293,7 @@
     if (k.indexOf('fh:') !== 0) return true;
     if (k === 'fh:ai:key' || k === 'fh:ai:gitToken' || k === 'fh:ai:sessions' || k === 'fh:ai:sid') return true;
     if (k === 'fh:ai:roomCache' || k === 'fh:cmdhist') return true;
+    if (k === 'fh:acct' || k === 'fh:acct:try') return true;
     if (k === CFG_ID_KEY || k === CFG_AT_KEY || k === CFG_ADM_KEY) return true;
     if (k.indexOf('fh:ai:hist:') === 0 || k.indexOf('fh:mod:') === 0) return true;
     return false;
@@ -417,6 +418,11 @@
 
   function uploadConfig() {
     if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
+    if (!acctCur()) {
+      fhToast('请先登录账号（用户名 + PIN）');
+      acctOpen(uploadConfig);
+      return;
+    }
     var hasId = !!cfgLs(CFG_ID_KEY);
     var d = cfgDialog(hasId ? '⬆ 上传配置（更新云端）' : '⬆ 上传配置（首次）');
     if (hasId) {
@@ -446,6 +452,7 @@
       var salt, dk, tok;
       if (hasId) {
         var t0 = tIn ? tIn.value.trim() : '';
+        if (!t0) t0 = cfgLs('fh:ai:gitToken') || (acctCur() ? (acctCur().gitToken || '') : '');
         if (t0) tok = t0;
         d.stat.textContent = '读取云端配置…';
         var old = await cfgGet(path);
@@ -460,8 +467,8 @@
         } catch (e) { d.stat.textContent = 'PIN 不正确'; return; }
         if (!tok) { d.stat.textContent = '没有可用的 Token（请在下方填一个）'; return; }
       } else {
-        tok = tIn.value.trim();
-        if (!tok) { d.stat.textContent = '请填 GitLab Token'; return; }
+        tok = tIn.value.trim() || cfgLs('fh:ai:gitToken') || (acctCur() ? (acctCur().gitToken || '') : '');
+        if (!tok) { d.stat.textContent = '请填 GitLab Token（或先在 AI 网页 🔑 保存）'; return; }
         salt = cfgB64(cfgBytes(16));
         dk = await cfgImport(cfgB64(cfgBytes(32)));
       }
@@ -492,6 +499,7 @@
       }
       cfgSet(CFG_ID_KEY, id);
       cfgSet(CFG_AT_KEY, now);
+      acctSetField('gitToken', tok);
       if (ak) cfgSet(CFG_ADM_KEY, ak);
       d.stat.textContent = '✅ 已上传 ' + Object.keys(keys).length + ' 项配置（ID ' + id + '）';
       fhToast('⬆ 配置已上传到云端');
@@ -501,6 +509,11 @@
 
   function pullConfig() {
     if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
+    if (!acctCur()) {
+      fhToast('请先登录账号（用户名 + PIN）');
+      acctOpen(pullConfig);
+      return;
+    }
     var d = cfgDialog('⬇ 更新配置（从云端恢复）');
     var pin = cfgField(d.body, 'PIN', { type: 'password' });
     var row = document.createElement('div');
@@ -530,7 +543,7 @@
           var dk = await cfgImport(raw);
           var bx = await cfgDec(dk, o.box);
           var n = cfgApply(bx.keys);
-          if (bx.tok) cfgSet('fh:ai:gitToken', bx.tok);
+          if (bx.tok) { cfgSet('fh:ai:gitToken', bx.tok); acctSetField('gitToken', bx.tok); }
           cfgSet(CFG_ID_KEY, o.id);
           cfgSet(CFG_AT_KEY, o.at || new Date().toISOString());
           d.stat.textContent = '✅ 已恢复 ' + n + ' 项配置（ID ' + o.id + '）';
@@ -630,6 +643,217 @@
     });
   }
 
+  // ── v3.4 账号：用户名 + PIN（本机持久；AI Key / Token / 网页配置按账号保存） ──
+  // 登录状态存 fh:acct，刷新/重开都不用再输，直到手动退出或清空。
+  var ACCT_KEY = 'fh:acct';
+  var ACCT_TRY = 'fh:acct:try';
+  var ACCT_GAP = 5000;
+
+  function acctUserKey(user) {
+    var s = String(user || '').trim().toLowerCase(), h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+  function acctStore() {
+    try {
+      var j = JSON.parse(localStorage.getItem(ACCT_KEY) || 'null');
+      if (j && j.v === 1 && j.users && typeof j.users === 'object') return j;
+    } catch (e) {}
+    return { v: 1, users: {}, cur: '', at: 0 };
+  }
+  function acctSaveStore(a) { try { localStorage.setItem(ACCT_KEY, JSON.stringify(a)); } catch (e) {} }
+  function acctCur() {
+    var a = acctStore();
+    return (a.cur && a.users[a.cur]) ? a.users[a.cur] : null;
+  }
+  function acctAdopt() {
+    var o = {};
+    try {
+      o.key = localStorage.getItem('fh:ai:key') || '';
+      o.gitToken = localStorage.getItem('fh:ai:gitToken') || '';
+      o.sites = localStorage.getItem('fh:sites') || '';
+    } catch (e) {}
+    return o;
+  }
+  function acctApply(rec) {
+    try {
+      localStorage.setItem('fh:ai:key', rec.key || '');
+      localStorage.setItem('fh:ai:gitToken', rec.gitToken || '');
+      localStorage.setItem('fh:sites', typeof rec.sites === 'string' ? rec.sites : JSON.stringify(rec.sites || ''));
+    } catch (e) {}
+    try { window.dispatchEvent(new CustomEvent('fh:acct', { detail: { user: rec.user, on: true } })); } catch (e) {}
+  }
+  function acctEmitOff() {
+    try { window.dispatchEvent(new CustomEvent('fh:acct', { detail: { user: '', on: false } })); } catch (e) {}
+  }
+  function acctHash(user, pin, saltB64) {
+    var pass = 'acct|' + String(user).trim().toLowerCase() + '|' + String(pin);
+    if (window.crypto && crypto.subtle && crypto.subtle.deriveBits && window.TextEncoder) {
+      return crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveBits'])
+        .then(function (base) {
+          return crypto.subtle.deriveBits({ name: 'PBKDF2', salt: cfgUnb64(saltB64), iterations: 60000, hash: 'SHA-256' }, base, 256);
+        })
+        .then(function (bits) { return cfgB64(bits); });
+    }
+    var h1 = 5381, h2 = 52711, s = pass + '|' + saltB64;
+    for (var i = 0; i < s.length; i++) {
+      h1 = ((h1 * 33) ^ s.charCodeAt(i)) >>> 0;
+      h2 = ((h2 * 31) + s.charCodeAt(i)) >>> 0;
+    }
+    return Promise.resolve('x' + ('0000000' + h1.toString(16)).slice(-8) + ('0000000' + h2.toString(16)).slice(-8));
+  }
+  function acctWait() {
+    var now = Date.now(), last = 0;
+    try { last = parseInt(localStorage.getItem(ACCT_TRY) || '0', 10) || 0; } catch (e) {}
+    return now - last < ACCT_GAP ? Math.max(1, Math.ceil((ACCT_GAP - (now - last)) / 1000)) : 0;
+  }
+  function acctMark() { try { localStorage.setItem(ACCT_TRY, String(Date.now())); } catch (e) {} }
+
+  function acctLogin(user, pin) {
+    return new Promise(function (resolve) {
+      var u = String(user || '').trim();
+      var p = String(pin || '');
+      if (!/^[^\s]{2,20}$/.test(u)) return resolve({ ok: false, msg: '用户名需 2-20 位且不含空格' });
+      if (!/^[^\s]{4,30}$/.test(p)) return resolve({ ok: false, msg: 'PIN 需 4-30 位且不含空格' });
+      var wait = acctWait();
+      if (wait) return resolve({ ok: false, wait: wait });
+      acctMark();
+      var a = acctStore();
+      var uk = acctUserKey(u);
+      var rec = a.users[uk];
+      if (rec && String(rec.user || '').trim().toLowerCase() !== u.toLowerCase()) {
+        return resolve({ ok: false, msg: '用户名冲突，请换一个' });
+      }
+      if (rec) {
+        acctHash(u, p, rec.salt).then(function (h) {
+          if (h !== rec.pinHash) return resolve({ ok: false, msg: 'PIN 不正确' });
+          // 老数据迁移：账号里还没有的字段，沿用本机现有值
+          if (!rec.key) rec.key = localStorage.getItem('fh:ai:key') || '';
+          if (!rec.gitToken) rec.gitToken = localStorage.getItem('fh:ai:gitToken') || '';
+          if (!rec.sites) rec.sites = localStorage.getItem('fh:sites') || '';
+          rec.at = Date.now();
+          a.cur = uk;
+          acctSaveStore(a);
+          acctApply(rec);
+          resolve({ ok: true, rec: rec });
+        });
+      } else {
+        var salt;
+        try { salt = cfgB64(cfgBytes(16)); } catch (e) { salt = 's' + Date.now(); }
+        acctHash(u, p, salt).then(function (h) {
+          var nr = acctAdopt();
+          nr.user = u; nr.salt = salt; nr.pinHash = h; nr.at = Date.now();
+          a.users[uk] = nr;
+          a.cur = uk;
+          acctSaveStore(a);
+          acctApply(nr);
+          resolve({ ok: true, rec: nr, created: true });
+        });
+      }
+    });
+  }
+
+  function acctOut() {
+    var a = acctStore();
+    a.cur = '';
+    a.at = Date.now();
+    acctSaveStore(a);
+    try {
+      localStorage.removeItem('fh:ai:key');
+      localStorage.removeItem('fh:ai:gitToken');
+      localStorage.removeItem('fh:sites');
+    } catch (e) {}
+    acctEmitOff();
+    fhToast('👤 已退出登录（账号数据仍保存在本机）');
+  }
+
+  function acctSetField(field, val) {
+    var a = acctStore();
+    if (!a.cur || !a.users[a.cur]) return false;
+    a.users[a.cur][field] = val;
+    a.at = Date.now();
+    acctSaveStore(a);
+    return true;
+  }
+
+  function acctMask(s) {
+    s = String(s || '');
+    return s.length > 12 ? s.slice(0, 7) + '••••' + s.slice(-4) : '••••';
+  }
+
+  function acctOpen(afterLogin) {
+    var cur = acctCur();
+    var d = cfgDialog(cur ? '👤 账号 · ' + cur.user : '👤 登录 / 注册（用户名 + PIN）');
+    if (cur) {
+      var info = document.createElement('div');
+      info.style.cssText = 'font-size:11.5px;color:#9a9aa8;line-height:1.8;word-break:break-all';
+      function line(t) { var x = document.createElement('div'); x.textContent = t; info.append(x); }
+      line('当前账号：' + cur.user);
+      line('AI Key：' + (cur.key ? '已保存（' + acctMask(cur.key) + '）' : '未保存'));
+      line('GitLab Token：' + (cur.gitToken ? '已保存' : '未保存（上传 / 聊天室不可用）'));
+      line('登录状态保存在本机，刷新或重开都不用再输；直到这里点“退出登录”。');
+      d.body.append(info);
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+      var out = cfgBtn('退出登录', '#7a2b2b');
+      var cls = cfgBtn('关闭');
+      row.append(out, cls);
+      d.body.append(row);
+      out.onclick = function () { acctOut(); d.close(); };
+      cls.onclick = d.close;
+      return;
+    }
+    var uIn = cfgField(d.body, '用户名（2-20 位，不含空格）');
+    var pIn = cfgField(d.body, 'PIN（4-30 位，不含空格）', { type: 'password' });
+    var tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11px;color:#7f7f8c;line-height:1.6';
+    tip.textContent = '第一次输入的用户名会自动注册。登录后 AI Key / 上传 Token / 网页配置都跟着账号保存。每 5 秒只能提交一次。';
+    d.body.append(tip);
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+    var ok = cfgBtn('登录 / 注册', '#3a6df0');
+    var cancel = cfgBtn('取消');
+    row.append(ok, cancel);
+    d.body.append(row);
+    cancel.onclick = d.close;
+    ok.onclick = function () {
+      ok.disabled = true;
+      d.stat.textContent = '登录中…';
+      acctLogin(uIn.value, pIn.value).then(function (r) {
+        if (!r.ok) {
+          d.stat.textContent = r.wait ? '每 5 秒只能提交一次' : (r.msg || '登录失败');
+          if (r.wait) {
+            var left = r.wait;
+            ok.textContent = '请等 ' + left + 's';
+            var t = setInterval(function () {
+              left--;
+              if (left <= 0) { clearInterval(t); ok.disabled = false; ok.textContent = '登录 / 注册'; }
+              else ok.textContent = '请等 ' + left + 's';
+            }, 1000);
+          } else ok.disabled = false;
+          return;
+        }
+        fhToast((r.created ? '👤 已注册并登录：' : '👤 已登录：') + r.rec.user);
+        d.close();
+        if (typeof afterLogin === 'function') { try { afterLogin(r.rec); } catch (e) {} }
+      });
+    };
+    setTimeout(function () { try { uIn.focus(); } catch (e) {} }, 60);
+  }
+
+  // 供 mods 读取/写入当前账号
+  window.__fhAcct = {
+    cur: acctCur,
+    userKey: acctUserKey,
+    login: acctLogin,
+    logout: acctOut,
+    open: acctOpen,
+    saveKey: function (v) { return acctSetField('key', v); },
+    saveGit: function (v) { return acctSetField('gitToken', v); },
+    saveSites: function (v) { return acctSetField('sites', v); },
+    token: function () { var r = acctCur(); return r ? String(r.gitToken || '') : ''; }
+  };
+
   var GROUPS = {
     '学习': [
       ['✏️ 改名', 'mods/rename.js'],
@@ -651,13 +875,14 @@
       ['🔒 遮罩', 'mods/peek.js'],
       ['📝 名单', 'mods/edit.js'],
       ['🧹 清答案', 'mods/clean.js'],
+      ['👤 账号（用户名 + PIN）', acctOpen],
       ['⬆ 上传配置', uploadConfig],
       ['⬇ 更新配置', pullConfig],
       ['⏱ 解除限时', toggleLockFree],
       ['💣 清空', 'mods/reset.js']
     ],
     'chat': [
-      ['🤖 AI 网页 · v3.3', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.4', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
@@ -774,6 +999,15 @@
   var minBtn = icon('−', '收起成小圆点');
   minBtn.className = 'fh-ico fh-min';
   var themeBtn = icon('🌓', '深色 / 浅色');
+  var acctBtn = icon('👤', '账号（用户名 + PIN）');
+  acctBtn.onclick = function () { acctOpen(); };
+  function acctBtnState() {
+    var r = acctCur();
+    acctBtn.title = r ? ('账号：' + r.user + (r.gitToken ? '（Token 已保存）' : '（还没保存 Token）')) : '登录 / 注册（用户名 + PIN）';
+    acctBtn.style.color = r ? '#6f9bff' : '';
+  }
+  acctBtnState();
+  try { window.addEventListener('fh:acct', acctBtnState); } catch (e) {}
   var mainOpBtn = icon('◐', '主面板透明度');
   var light = false;
   try { light = localStorage.getItem('fh:theme') === 'light'; } catch (e) {}
@@ -786,7 +1020,7 @@
   var closeBtn = icon('✕', '关闭');
   closeBtn.className = 'fh-ico fh-close';
   closeBtn.onclick = function () { root.remove(); };
-  head.append(cat, title, themeBtn, mainOpBtn, minBtn, closeBtn);
+  head.append(cat, title, acctBtn, themeBtn, mainOpBtn, minBtn, closeBtn);
 
   // 二级标签
   var tabs = document.createElement('div');

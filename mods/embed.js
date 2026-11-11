@@ -17,6 +17,10 @@
   }
   function save(list) {
     try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) {}
+    // v3.4：网页配置同时归到当前登录账号（没有账号时只存本机）
+    try {
+      if (window.__fhAcct && window.__fhAcct.saveSites) window.__fhAcct.saveSites(JSON.stringify(list));
+    } catch (e) {}
   }
 
   var old = document.getElementById('__fw');
@@ -35,6 +39,17 @@
   }
 
   var sites = load();
+  function closeRoot() { window.__fhEmbRefresh = null; root.remove(); }
+  // 账号切换后刷新常用站点（账号里的 sites 已在登录时写回 fh:sites）
+  window.__fhEmbRefresh = function () { sites = load(); draw(); };
+  if (!window.__fhEmbHooked) {
+    window.__fhEmbHooked = 1;
+    try {
+      window.addEventListener('fh:acct', function () {
+        try { if (window.__fhEmbRefresh) window.__fhEmbRefresh(); } catch (e) {}
+      });
+    } catch (e) {}
+  }
   var editing = false;
 
   var root = document.createElement('div');
@@ -55,7 +70,7 @@
   var x = document.createElement('button');
   x.textContent = '✕';
   x.style.cssText = 'width:34px;height:34px;border:0;border-radius:9px;background:transparent;color:#999;font-size:16px;cursor:pointer';
-  x.onclick = function () { root.remove(); };
+  x.onclick = function () { closeRoot(); };
   head.append(tt, edit, x);
 
   var body = document.createElement('div');
@@ -140,7 +155,7 @@
   body.append(row, grid);
   card.append(head, body);
   root.append(card);
-  root.onclick = function (e) { if (e.target === root) root.remove(); };
+  root.onclick = function (e) { if (e.target === root) closeRoot(); };
   document.body.append(root);
   draw();
 

