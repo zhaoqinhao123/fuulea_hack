@@ -45,8 +45,18 @@
     if (/\/(mp4|webm)\//.test(t)) return /mp4/.test(t) ? '.mp4' : '.webm';
     return '.jpg';
   }
+  function mediaUserDir() {
+    var u = '';
+    try {
+      var r = window.__fhAcct && window.__fhAcct.cur ? window.__fhAcct.cur() : null;
+      if (r && r.user) u = String(r.user);
+    } catch (e) {}
+    u = u.replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+|\.+$/g, '').slice(0, 40);
+    return u || 'guest';
+  }
   function uploadToGit(blob, name, token, cb) {
-    var path = 'media/' + Date.now() + '-' + Math.floor(Math.random() * 9000 + 1000) + mediaExt(blob, name);
+    // v3.8：按登录用户名分目录，media/<用户名>/...
+    var path = 'media/' + mediaUserDir() + '/' + Date.now() + '-' + Math.floor(Math.random() * 9000 + 1000) + mediaExt(blob, name);
     var r = new FileReader();
     r.onload = function () {
       var b64 = String(r.result || '').split(',')[1] || '';
@@ -126,10 +136,11 @@
     // v3.3：设置过 GitLab Token 时，显示「上传至 GitLab 仓库」
     var gitToken = '';
     try { gitToken = localStorage.getItem('fh:ai:gitToken') || ''; } catch (e) {}
+    try { if (!gitToken && window.__fhAcct && window.__fhAcct.token) gitToken = window.__fhAcct.token() || ''; } catch (e) {}
     if (gitToken.trim()) {
       var up = document.createElement('button');
       up.textContent = '⬆';
-      up.title = '上传至 GitLab 仓库';
+      up.title = '上传至 GitLab media/' + mediaUserDir() + '/';
       up.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:17px;cursor:pointer';
       var upBusy = false;
       up.onclick = function () {

@@ -23,6 +23,7 @@
   var K_SESS = 'fh:ai:sessions';
   var K_SID = 'fh:ai:sid';
   var K_HIST_P = 'fh:ai:hist:';
+  var K_USE = 'fh:ai:usage:';           // 每个会话的累计 token 用量
   var K_NICK = 'fh:ai:nick';
   var K_ROOM_AT = 'fh:ai:roomAt';
   var K_ROOM_MODE = 'fh:ai:roomMode';
@@ -346,6 +347,12 @@
       '#__ai .ai-send.stop{background:var(--danger);box-shadow:none}',
       '#__ai .ai-stat{display:flex;align-items:center;gap:7px;margin-top:5px;color:var(--dim);font-size:9.5px}',
       '#__ai .ai-stat .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      // v3.8 底部用量行：token / 速率 / 余额（小字，窄屏可换行）
+      '#__ai .ai-usage{display:flex;align-items:center;flex-wrap:wrap;margin-top:2px;color:var(--dim);font-size:9px;line-height:1.5}',
+      '#__ai .ai-usage .u{flex:1;min-width:0;word-break:break-word}',
+      '#__ai .ai-usage .sep{flex:none;white-space:pre;opacity:.55}',
+      '#__ai .ai-usage .bal{flex-shrink:0;color:var(--muted);cursor:pointer;border-bottom:1px dashed rgba(127,127,140,.45)}',
+      '#__ai .ai-usage .bal.loading{opacity:.55;cursor:default}',
       // 覆盖层（会话列表 / 相册 / 聊天室）共用
       '#__ai .ai-ov{position:absolute;left:0;top:0;right:0;bottom:0;z-index:8;display:none;flex-direction:column;',
       'background:var(--bg);min-width:0;min-height:0}',
@@ -725,7 +732,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.7';
+  ver.textContent = 'v3.8';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -862,7 +869,7 @@
     rebindOwner();
     renderAttach();
     paintAcct();
-    cfgMsg.textContent = v ? 'Token 已保存，拍照后会自动上传 GitLab media/' : '已清除上传 Token';
+    cfgMsg.textContent = v ? 'Token 已保存，拍照后会自动上传 GitLab media/<用户名>/' : '已清除上传 Token';
   });
 
   // 账号：用户名 + PIN，本机持久；AI Key / Token / 网页配置跟着账号走
@@ -954,7 +961,7 @@
   autoIn.type = 'checkbox';
   autoIn.checked = !!cfg.autoUpload;
   var autoLab = document.createElement('span');
-  autoLab.textContent = '拍照后自动上传到 GitLab media/';
+  autoLab.textContent = '拍照后自动上传到 GitLab media/<用户名>/';
   autoRow.append(autoIn, autoLab);
   autoIn.onchange = function () {
     cfg.autoUpload = !!autoIn.checked;
@@ -1028,7 +1035,7 @@
   modeSel.value = cfg.mode;
   modeRow.append(modeLab, modeSel);
 
-  var hint = div('ai-hint', 'Key / Token 只存本机；图片上传到 ' + GIT_PROJ + ':' + GIT_BRANCH + '/media/。');
+  var hint = div('ai-hint', 'Key / Token 只存本机；图片上传到 ' + GIT_PROJ + ':' + GIT_BRANCH + '/media/<用户名>/。');
   var cfgMsg = div('ai-cfgmsg', '');
   cfgBox.append(acctRow, keyField.row, baseRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
 
@@ -1071,7 +1078,7 @@
       renderAttach();
     }
   };
-  var attachUp = button('上传', 'ai-mini', '把还没上传的图片传到 GitLab media/');
+  var attachUp = button('上传', 'ai-mini', '把还没上传的图片传到 GitLab media/<用户名>/');
   var attachRm = button('清空', 'ai-mini', '移除全部图片');
   attachBar.append(attachTit, gitUpWrap, attachUp, attachRm);
   attach.append(thumbs, attachBar);
@@ -1091,7 +1098,14 @@
   var statTxt = div('grow', '');
   var clearBtn = button('清空', 'ai-mini', '清空本机对话记录');
   stat.append(statTxt, clearBtn);
-  foot.append(attach, inputRow, stat);
+  // v3.8 用量行：本会话 token、上一轮速度、DeepSeek 余额
+  var usageRow = div('ai-usage');
+  var usageTxt = div('u', '本会话 ↑0 ↓0 tokens · 本轮 — tok/s');
+  var balTxt = div('bal', '余额 --');
+  var usageSep = div('sep', ' · ');
+  balTxt.title = '点击刷新余额';
+  usageRow.append(usageTxt, usageSep, balTxt);
+  foot.append(attach, inputRow, stat, usageRow);
 
   card.append(head, cfgBox, msgs, foot);
   root.append(shade, card);
@@ -1991,7 +2005,7 @@
     });
     gitTree(MEDIA_DIR).then(function (r) {
       if (!r.ok) { plog('媒体目录 → HTTP ' + r.status); return; }
-      plog('✓ 媒体目录 media/：' + r.items.length + ' 个文件（上限 100）');
+      plog('✓ 媒体目录 media/：' + r.items.length + ' 项（含用户子目录，列表上限 100）');
     });
   }
   function probeCache() {
@@ -2080,14 +2094,164 @@
     dot.classList.toggle('on', !!cfg.key);
     dot.title = cfg.key ? 'API Key 已配置 · 点开设置' : '未配置 API Key · 点开设置';
   }
+
+  // ── v3.8 用量 / 速率 / 余额 ──
+  var K_USAGE_TIP = '本会话累计输入 / 输出 token；输入按每轮上下文重新计费，所以会大于字数。';
+  var balanceState = { loading: false, text: '--', title: '点击刷新 DeepSeek 余额', at: 0 };
+
+  function num0(v) {
+    v = Number(v);
+    return isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function fmtTok(n) {
+    n = num0(n);
+    if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+  function readUsage(id) {
+    var o = { p: 0, c: 0, n: 0, rate: 0, lastP: 0, lastC: 0, at: 0 };
+    if (!id) return o;
+    try {
+      var j = JSON.parse(read(K_USE + id, '{}'));
+      if (j && typeof j === 'object') {
+        o.p = num0(j.p); o.c = num0(j.c); o.n = num0(j.n);
+        o.rate = Number(j.rate) > 0 ? Number(j.rate) : 0;
+        o.lastP = num0(j.lastP); o.lastC = num0(j.lastC);
+        o.at = num0(j.at);
+      }
+    } catch (e) {}
+    return o;
+  }
+  function renderUsage() {
+    if (!usageTxt) return;
+    var u = readUsage(sid);
+    var txt = '本会话 ↑' + fmtTok(u.p) + ' ↓' + fmtTok(u.c) + ' tokens · 本轮 ' +
+      (u.rate > 0 ? Math.round(u.rate) + ' tok/s' : '—');
+    usageTxt.textContent = txt;
+    usageTxt.title = K_USAGE_TIP;
+    balTxt.textContent = '余额 ' + (balanceState.text || '--');
+    balTxt.title = balanceState.title || '点击刷新 DeepSeek 余额';
+    balTxt.classList.toggle('loading', !!balanceState.loading);
+  }
+  function recordUsage(u, startedAt, firstAt, endedAt, id) {
+    if (!u) return;
+    var p = num0(u.prompt_tokens != null ? u.prompt_tokens : u.input_tokens);
+    var c = num0(u.completion_tokens != null ? u.completion_tokens : u.output_tokens);
+    if (!p && !c) return;
+    id = id || sid;
+    if (!id) return;
+    var rec = readUsage(id);
+    rec.p += p;
+    rec.c += c;
+    rec.n += 1;
+    rec.lastP = p;
+    rec.lastC = c;
+    rec.at = Date.now();
+    var base = firstAt || startedAt;
+    if (c > 0 && base && endedAt > base) {
+      var sec = (endedAt - base) / 1000;
+      if (sec >= 0.05) rec.rate = c / sec;
+    }
+    try { localStorage.setItem(K_USE + id, JSON.stringify(rec)); } catch (e) {}
+    renderUsage();
+  }
+  function refreshBalance(force) {
+    if (!cfg.key) {
+      balanceState.text = '--';
+      balanceState.title = '未填 API Key；点这里去填';
+      renderUsage();
+      return;
+    }
+    if (balanceState.loading) return;
+    if (!force && Date.now() - balanceState.at < 60000) return;
+    var host = '';
+    try { host = new URL(cfg.base).hostname; } catch (e) {}
+    if (!/(^|\.)deepseek\.com$/i.test(host)) {
+      balanceState.text = '--';
+      balanceState.title = '当前 API 地址不是 DeepSeek 官方，无法查询余额';
+      balanceState.at = Date.now();
+      renderUsage();
+      return;
+    }
+    balanceState.loading = true;
+    renderUsage();
+    var ctl = null;
+    try { ctl = new AbortController(); } catch (e) {}
+    var timer = setTimeout(function () { if (ctl) { try { ctl.abort(); } catch (e) {} } }, 12000);
+    fetch('https://api.deepseek.com/user/balance', {
+      method: 'GET',
+      headers: { Authorization: 'Bearer ' + String(cfg.key).trim() },
+      cache: 'no-store',
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (r) {
+      return r.text().then(function (t) {
+        var j = null;
+        try { j = JSON.parse(t); } catch (e) {}
+        return { ok: r.ok, status: r.status, j: j };
+      });
+    }).then(function (r) {
+      clearTimeout(timer);
+      balanceState.loading = false;
+      balanceState.at = Date.now();
+      if (!r.ok || !r.j) {
+        balanceState.text = '--';
+        balanceState.title = r.status === 401 ? 'API Key 无效（401），无法查询余额'
+          : ('余额查询失败（' + (r.status || '网络错误') + '），点此重试');
+        renderUsage();
+        return;
+      }
+      if (r.j.is_available === false) {
+        balanceState.text = '不可用';
+        balanceState.title = '账户余额不可用';
+        renderUsage();
+        return;
+      }
+      var arr = r.j.balance_infos || [];
+      var b = null;
+      for (var i = 0; i < arr.length; i++) {
+        if (arr[i] && arr[i].currency === 'CNY') { b = arr[i]; break; }
+      }
+      if (!b && arr.length) b = arr[0];
+      if (!b) {
+        balanceState.text = '--';
+        balanceState.title = '接口未返回余额信息，点此重试';
+      } else {
+        var cur = String(b.currency || '');
+        var sym = cur === 'CNY' ? '¥' : (cur ? cur + ' ' : '');
+        balanceState.text = sym + String(b.total_balance == null ? '--' : b.total_balance);
+        balanceState.title = '充值余额 ' + sym + String(b.topped_up_balance == null ? '--' : b.topped_up_balance) +
+          ' · 赠送余额 ' + sym + String(b.granted_balance == null ? '--' : b.granted_balance) + '（点击刷新）';
+      }
+      renderUsage();
+    }).catch(function () {
+      clearTimeout(timer);
+      balanceState.loading = false;
+      balanceState.at = Date.now();
+      balanceState.text = '--';
+      balanceState.title = '余额查询失败（网络或跨域限制），点此重试';
+      renderUsage();
+    });
+  }
+  balTxt.onclick = function () {
+    if (!cfg.key) {
+      openCfg(true);
+      keyField.begin();
+      keyField.focus();
+      return;
+    }
+    refreshBalance(true);
+  };
+
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.7 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.8 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
     badge.title = cfg.model + ' · ' + (MODE_NAME[cfg.mode] || '对话');
+    renderUsage();
   }
 
   function scrollBottom() {
@@ -2318,6 +2482,16 @@
   function rand4() {
     return String(Math.floor(Math.random() * 10000)).padStart(4, '0');
   }
+  // v3.8：媒体按登录用户名分目录；未登录放 guest
+  function mediaUserDir() {
+    var r = acctRec();
+    var u = r && r.user ? String(r.user) : '';
+    u = u.replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+|\.+$/g, '').slice(0, 40);
+    return u || 'guest';
+  }
+  function mediaNewPath(ext) {
+    return 'media/' + mediaUserDir() + '/' + stamp() + '-' + rand4() + ext;
+  }
 
   function compressImage(file) {
     return new Promise(function (resolve, reject) {
@@ -2455,7 +2629,7 @@
     }
     item.state = 'uploading';
     item.error = '';
-    item.remotePath = 'media/' + stamp() + '-' + rand4() + '.jpg';
+    item.remotePath = mediaNewPath('.jpg');
     renderAttach();
 
     var b64 = String(item.dataUrl || '').split(',')[1] || '';
@@ -2499,7 +2673,7 @@
         // 同一秒/同名冲突：换一个名字再试一次
         if (x.status === 400 && /already exists/i.test(x.responseText || '') && !item.retried) {
           item.retried = true;
-          item.remotePath = 'media/' + stamp() + '-' + rand4() + '.jpg';
+          item.remotePath = mediaNewPath('.jpg');
           uploadImage(item);
           return;
         }
@@ -2794,6 +2968,12 @@
         payload.thinking = { type: 'enabled' };
         payload.reasoning_effort = cfg.depth;
       }
+      // 官方接口要求显式打开才会在流末尾返回 usage；中转地址不猜，避免 400
+      try {
+        if (/(^|\.)deepseek\.com$/i.test(new URL(endpoint()).hostname)) {
+          payload.stream_options = { include_usage: true };
+        }
+      } catch (e) {}
     }
 
     var content = '';
@@ -2805,11 +2985,20 @@
     var err = '';
     var sseBuf = '';
     var lastLen = 0;
+    var reqUsage = null;
+    var reqStart = Date.now();
+    var firstAt = 0;
 
     function finish() {
       if (done) return;
       done = true;
       xhr = null;
+      // 先把本轮 usage 记到发起请求的会话（即使用户中途切走）
+      if (reqUsage) {
+        recordUsage(reqUsage, reqStart, firstAt, Date.now(), sendSid);
+        reqUsage = null;
+      }
+      refreshBalance();
       setBusy(false);
       ui.bubble.classList.remove('ai-wait');
       // 用户中途换了 Key / 切了会话：结果不能写进新身份的会话
@@ -2867,12 +3056,14 @@
 
     function takeReason(s) {
       if (!s) return;
+      if (!firstAt) firstAt = Date.now();
       gotReason = true;
       reasoning += s;
       setReason(ui, s);
     }
     function takeContent(s) {
       if (!s) return;
+      if (!firstAt) firstAt = Date.now();
       gotContent = true;
       content += s;
       setContent(ui, s);
@@ -2881,6 +3072,7 @@
       return (e && (e.message || e.type)) || dflt;
     }
     function handleChatJson(j) {
+      if (j.usage) reqUsage = j.usage;
       if (j.error) { err = errText(j.error, '接口返回错误'); return; }
       var ch = j.choices && j.choices[0];
       if (!ch) return;
@@ -2903,6 +3095,8 @@
       return txt;
     }
     function handleResponsesJson(j) {
+      var gu = (j && j.usage) || (j && j.response && j.response.usage);
+      if (gu) reqUsage = gu;
       var t = String((j && j.type) || '');
       if (t === 'error' || j.error) { err = errText(j.error || j, '接口返回错误'); return; }
       if (/\.delta$/.test(t)) {
@@ -2911,6 +3105,8 @@
         return;
       }
       if (/^response\.(completed|done)$/.test(t)) {
+        var uu = (j.response && j.response.usage) || j.usage;
+        if (uu) reqUsage = uu;
         if (!gotContent) {
           var txt = extractResponsesOutput(j.response || j);
           if (txt) takeContent(txt);
@@ -3296,7 +3492,6 @@
   acctBtn.title = acctRec() ? ('账号：' + acctRec().user) : '账号（用户名 + PIN）';
   document.addEventListener('keydown', onKey);
   window.__fhAIStop = stop;
-  window.__fhAiRoom = function () { try { openRoom(); } catch (e) {} };
 
   document.body.append(root);
   document.body.append(photoIn);
@@ -3305,17 +3500,12 @@
   setStat();
   renderHistory();
   grow();
+  if (cfg.key) setTimeout(function () { refreshBalance(false); }, 800);
 
-  var wantRoom = false;
-  try {
-    wantRoom = localStorage.getItem('fh:ai:roomOpen') === '1';
-    if (wantRoom) localStorage.removeItem('fh:ai:roomOpen');
-  } catch (e) {}
+  // v3.8：聊天室已拆成独立 mods/room.js，这里只清理旧版一次性开关
+  try { localStorage.removeItem('fh:ai:roomOpen'); } catch (e) {}
 
-  if (wantRoom) {
-    // 从主面板「💬 聊天室」进入：直接开聊天室，不弹 Key / 账号设置
-    setTimeout(function () { try { openRoom(); } catch (e) {} }, 160);
-  } else if (!cfg.key) {
+  if (!cfg.key) {
     openCfg(true);
     cfgMsg.textContent = acctRec()
       ? '已登录：输入 API Key 后点“保存”，之后只显示掩码，Key 会归到当前账号。'

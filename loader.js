@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.7';
+  var TAG = '3.8';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -202,12 +202,16 @@
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
 
-  function loadMod(path, btn) {
+  function loadMod(path, btn, after) {
     function done() { if (btn) { btn.disabled = false; btn.style.opacity = 1; } }
+    function ok() {
+      done();
+      if (typeof after === 'function') { try { after(); } catch (e) {} }
+    }
     function cached(why) {
       var c = null;
       try { c = localStorage.getItem('fh:mod:' + path); } catch (e) {}
-      if (c) { try { eval(c); return done(); } catch (e) {} }
+      if (c) { try { eval(c); return ok(); } catch (e) {} }
       alert('加载失败：' + why);
       done();
     }
@@ -227,7 +231,7 @@
         if (settled) return;
         settled = true; s.remove(); next();
       }, 5000);
-      s.onload = function () { if (settled) return; settled = true; clearTimeout(timer); s.remove(); done(); };
+      s.onload = function () { if (settled) return; settled = true; clearTimeout(timer); s.remove(); ok(); };
       s.onerror = function () { if (settled) return; settled = true; clearTimeout(timer); s.remove(); next(); };
       s.src = urls[i++];
       document.body.append(s);
@@ -339,11 +343,11 @@
   function cfgExcluded(k) {
     if (k.indexOf('fh:') !== 0) return true;
     if (k === 'fh:ai:key' || k === 'fh:ai:gitToken' || k === 'fh:ai:sessions' || k === 'fh:ai:sid') return true;
-    if (k === 'fh:ai:roomCache' || k === 'fh:cmdhist') return true;
+    if (k === 'fh:ai:roomCache' || k === 'fh:room:cache' || k === 'fh:cmdhist') return true;
     if (k === 'fh:acct' || k === 'fh:acct:try') return true;
     if (k === CFG_ID_KEY || k === CFG_AT_KEY || k === CFG_ADM_KEY) return true;
     if (k === CFG_PIN_KEY || k === CFG_PIN_T) return true;
-    if (k.indexOf('fh:ai:hist:') === 0 || k.indexOf('fh:mod:') === 0) return true;
+    if (k.indexOf('fh:ai:hist:') === 0 || k.indexOf('fh:ai:usage:') === 0 || k.indexOf('fh:mod:') === 0) return true;
     return false;
   }
   function cfgCollect() {
@@ -1089,12 +1093,12 @@
     token: function () { var r = acctCur(); return r ? String(r.gitToken || '') : ''; }
   };
 
-  // v3.5：聊天室入口移到主界面 chat 分组（AI 窗口顶部不再放聊天室按钮）
-  // AI 已开着就直接打开聊天室；没开则加载 ai.js 并通过 flag 让它启动后自动打开。
+  // v3.8：聊天室拆成独立模块 mods/room.js，不再借 AI 网页的窗口
   function openChatRoom(btn) {
-    if (window.__fhAiRoom) { try { window.__fhAiRoom(); return; } catch (e) {} }
-    try { localStorage.setItem('fh:ai:roomOpen', '1'); } catch (e) {}
-    loadMod('mods/ai.js', btn);
+    if (window.__fhRoom) { try { window.__fhRoom(); return; } catch (e) {} }
+    loadMod('mods/room.js', btn, function () {
+      if (window.__fhRoom) { try { window.__fhRoom(); } catch (e) {} }
+    });
   }
 
   var GROUPS = {
@@ -1127,7 +1131,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.7', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.8', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
