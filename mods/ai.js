@@ -256,7 +256,33 @@
       '#__ai .ai-copy{margin-left:auto;border:0;background:transparent;color:var(--dim);font:9.5px/1 inherit;',
       'cursor:pointer;padding:2px 0}',
       '#__ai .ai-bubble{padding:9px 11px;border-radius:12px;background:var(--bot);color:var(--fg);',
-      'white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}',
+      'white-space:normal;word-break:break-word;overflow-wrap:anywhere;user-select:text;-webkit-user-select:text}',
+      '#__ai .ai-msg.user .ai-bubble{white-space:pre-wrap}',
+      // v3.6：Markdown / LaTeX 渲染样式
+      '#__ai .ai-md p{margin:0 0 6px}',
+      '#__ai .ai-md>*:first-child{margin-top:0}',
+      '#__ai .ai-md>*:last-child{margin-bottom:0}',
+      '#__ai .ai-md h1,#__ai .ai-md h2,#__ai .ai-md h3,#__ai .ai-md h4,#__ai .ai-md h5,#__ai .ai-md h6{',
+      'margin:10px 0 5px;line-height:1.35;font-weight:700}',
+      '#__ai .ai-md h1{font-size:17px}#__ai .ai-md h2{font-size:15.5px}#__ai .ai-md h3{font-size:14px}',
+      '#__ai .ai-md h4,#__ai .ai-md h5,#__ai .ai-md h6{font-size:13px;color:var(--muted)}',
+      '#__ai .ai-md pre{margin:6px 0;padding:8px 10px;border-radius:8px;background:var(--code);',
+      'overflow:auto;font:11.5px/1.55 ui-monospace,Menlo,Consolas,monospace}',
+      '#__ai .ai-md code{padding:1px 4px;border-radius:4px;background:var(--code);',
+      'font:11.5px/1.5 ui-monospace,Menlo,Consolas,monospace;word-break:break-word}',
+      '#__ai .ai-md pre code{padding:0;background:transparent;font:inherit}',
+      '#__ai .ai-md blockquote{margin:6px 0;padding:2px 10px;border-left:2px solid var(--line);color:var(--muted)}',
+      '#__ai .ai-md ul,#__ai .ai-md ol{margin:4px 0 6px;padding-left:20px}',
+      '#__ai .ai-md li{margin:2px 0}',
+      '#__ai .ai-md hr{border:0;border-top:1px solid var(--line);margin:9px 0}',
+      '#__ai .ai-md table{border-collapse:collapse;margin:6px 0;max-width:100%;display:block;overflow:auto}',
+      '#__ai .ai-md th,#__ai .ai-md td{border:1px solid var(--line);padding:3px 7px;font-size:11.5px;text-align:left}',
+      '#__ai .ai-md th{background:var(--soft);font-weight:700}',
+      '#__ai .ai-md a{color:var(--accent);text-decoration:underline;word-break:break-all}',
+      '#__ai .ai-md .ai-math-block{overflow-x:auto;overflow-y:hidden;margin:6px 0;max-width:100%}',
+      '#__ai .ai-md .katex{font-size:1.05em}',
+      '#__ai .ai-md .katex-display{margin:4px 0}',
+      '#__ai .ai-line .m .katex{font-size:1.02em}',
       '#__ai .ai-msg.assistant .ai-bubble{border-bottom-left-radius:4px}',
       '#__ai .ai-msg.user .ai-bubble{background:linear-gradient(180deg,var(--user),var(--accent2));color:#fff;',
       'border-bottom-right-radius:4px}',
@@ -352,7 +378,7 @@
       '#__ai .ai-line.me{align-self:flex-end;align-items:flex-end}',
       '#__ai .ai-line .n{font-size:9.5px;color:var(--dim)}',
       '#__ai .ai-line .m{padding:7px 10px;border-radius:11px;background:var(--bot);color:var(--fg);',
-      'font-size:12px;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}',
+      'font-size:12px;white-space:normal;word-break:break-word;overflow-wrap:anywhere}',
       '#__ai .ai-line.me .m{background:linear-gradient(180deg,var(--user),var(--accent2));color:#fff}',
       '#__ai .ai-line .m img{display:block;max-width:100%;max-height:220px;border-radius:7px;margin-top:4px;cursor:zoom-in}',
       '#__ai .ai-line .t{font-size:9px;color:var(--dim)}',
@@ -386,6 +412,288 @@
     return b;
   }
 
+  // ── Markdown + LaTeX（v3.6：AI 回答与聊天室；纯 DOM 构建，绝不把消息当 HTML 注入）──
+  var katexP = null;
+  function ensureKatex() {
+    if (window.katex && window.katex.render) return Promise.resolve(true);
+    if (katexP) return katexP;
+    var bases = ['https://fastly.jsdelivr.net/npm/katex@0.16.11/dist/',
+                 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/'];
+    katexP = new Promise(function (resolve) {
+      var i = 0;
+      function tryOne() {
+        if (i >= bases.length) { resolve(false); return; }
+        var base = bases[i++];
+        var css = document.createElement('link');
+        css.rel = 'stylesheet';
+        css.href = base + 'katex.min.css';
+        document.head.appendChild(css);
+        var s = document.createElement('script');
+        s.src = base + 'katex.min.js';
+        var fin = false;
+        var to = setTimeout(function () {
+          if (fin) return; fin = true; try { s.remove(); } catch (e) {} tryOne();
+        }, 6000);
+        s.onload = function () {
+          if (fin) return; fin = true; clearTimeout(to);
+          resolve(!!(window.katex && window.katex.render));
+        };
+        s.onerror = function () {
+          if (fin) return; fin = true; clearTimeout(to);
+          try { s.remove(); } catch (e) {} tryOne();
+        };
+        document.head.appendChild(s);
+      }
+      tryOne();
+    });
+    return katexP;
+  }
+  function typesetMath(el) {
+    var list = el.querySelectorAll('.ai-math');
+    if (!list.length) return;
+    ensureKatex().then(function (ok) {
+      if (!ok) return;
+      [].forEach.call(list, function (n) {
+        if (n.dataset.done || !n.dataset.tex) return;
+        try {
+          window.katex.render(n.dataset.tex, n, {
+            displayMode: n.dataset.display === '1',
+            throwOnError: false, trust: false, strict: 'ignore'
+          });
+          n.dataset.done = '1';
+        } catch (e) {}
+      });
+    });
+  }
+  function mdMath(tex, display) {
+    var s = document.createElement('span');
+    s.className = 'ai-math';
+    s.dataset.tex = tex;
+    if (display) s.dataset.display = '1';
+    s.textContent = display ? ('$$' + tex + '$$') : ('$' + tex + '$');
+    return s;
+  }
+  function mdInline(parent, text) {
+    var src = String(text == null ? '' : text);
+    var re = /(`+)([\s\S]*?)\1|\$\$([\s\S]+?)\$\$|\$([^\s$][^$\n]*?)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]*)\]\(([^)\s]+)\)|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\n]+?)\*|_([^_\n]+?)_|\n|\\([\\`*_{}\[\]()#+\-.!>~$|])/g;
+    var last = 0, m;
+    while ((m = re.exec(src))) {
+      if (m.index > last) parent.appendChild(document.createTextNode(src.slice(last, m.index)));
+      last = re.lastIndex;
+      if (m[2] !== undefined) {
+        var c = document.createElement('code');
+        c.textContent = m[2].replace(/^\n|\n$/g, '');
+        parent.appendChild(c);
+      } else if (m[3] !== undefined) {
+        parent.appendChild(mdMath(m[3].trim(), true));
+      } else if (m[4] !== undefined) {
+        parent.appendChild(mdMath(m[4].trim(), false));
+      } else if (m[5] !== undefined) {
+        parent.appendChild(mdMath(m[5].trim(), false));
+      } else if (m[6] !== undefined) {
+        parent.appendChild(mdMath(m[6].trim(), true));
+      } else if (m[7] !== undefined) {
+        parent.appendChild(document.createTextNode(m[7] || '图片'));
+      } else if (m[9] !== undefined) {
+        var a;
+        if (/^https?:\/\//i.test(m[10])) {
+          a = document.createElement('a');
+          a.href = m[10];
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = m[9] || m[10];
+        } else {
+          a = document.createElement('span');
+          a.textContent = (m[9] || '') + ' (' + m[10] + ')';
+        }
+        parent.appendChild(a);
+      } else if (m[11] !== undefined) {
+        var b1 = document.createElement('strong'); mdInline(b1, m[11]); parent.appendChild(b1);
+      } else if (m[12] !== undefined) {
+        var b2 = document.createElement('strong'); mdInline(b2, m[12]); parent.appendChild(b2);
+      } else if (m[13] !== undefined) {
+        var de = document.createElement('del'); mdInline(de, m[13]); parent.appendChild(de);
+      } else if (m[14] !== undefined) {
+        var e1 = document.createElement('em'); mdInline(e1, m[14]); parent.appendChild(e1);
+      } else if (m[15] !== undefined) {
+        var e2 = document.createElement('em'); mdInline(e2, m[15]); parent.appendChild(e2);
+      } else if (m[16] !== undefined) {
+        parent.appendChild(document.createTextNode(m[16]));
+      } else if (m[0] === '\n') {
+        parent.appendChild(document.createElement('br'));
+      }
+    }
+    if (last < src.length) parent.appendChild(document.createTextNode(src.slice(last)));
+  }
+  function mdRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (s) { return s.trim(); });
+  }
+  function mdBlocks(text) {
+    var frag = document.createDocumentFragment();
+    var lines = String(text == null ? '' : text).replace(/\r\n?/g, '\n').split('\n');
+    var i = 0, para = [];
+    function flush() {
+      if (!para.length) return;
+      var p = document.createElement('p');
+      mdInline(p, para.join('\n'));
+      frag.appendChild(p);
+      para = [];
+    }
+    while (i < lines.length) {
+      var ln = lines[i];
+      if (/^\s*$/.test(ln)) { flush(); i++; continue; }
+      var fm = ln.match(/^ {0,3}(```+|~~~+)\s*([^\s`]*)\s*$/);
+      if (fm) {
+        flush();
+        var fenceCh = fm[1].charAt(0);
+        var lang = fm[2] || '';
+        var buf = [];
+        i++;
+        while (i < lines.length && !(new RegExp('^ {0,3}' + fenceCh + '{3,}\\s*$')).test(lines[i])) {
+          buf.push(lines[i]); i++;
+        }
+        i++;
+        var pre = document.createElement('pre');
+        var code = document.createElement('code');
+        if (lang) code.className = 'lang-' + lang.replace(/[^\w+-]/g, '');
+        code.textContent = buf.join('\n');
+        pre.appendChild(code);
+        frag.appendChild(pre);
+        continue;
+      }
+      // $$ 块级公式
+      var dm = ln.match(/^ {0,3}\$\$\s*(.*)$/);
+      if (dm) {
+        flush();
+        var tex = [];
+        var rest = dm[1];
+        var end = rest.match(/^(.*?)\$\$\s*$/);
+        if (end) { if (end[1].trim()) tex.push(end[1]); i++; }
+        else {
+          if (rest.trim()) tex.push(rest);
+          i++;
+          while (i < lines.length) {
+            var e2 = lines[i].match(/^(.*?)\$\$\s*$/);
+            if (e2) { if (e2[1].trim()) tex.push(e2[1]); i++; break; }
+            tex.push(lines[i]); i++;
+          }
+        }
+        var mb = document.createElement('div');
+        mb.className = 'ai-math-block';
+        mb.appendChild(mdMath(tex.join('\n').trim(), true));
+        frag.appendChild(mb);
+        continue;
+      }
+      // \[ 块级公式
+      if (/^ {0,3}\\\[/.test(ln)) {
+        flush();
+        var tex2 = [];
+        var l0 = ln.replace(/^ {0,3}\\\[/, '');
+        var e3 = l0.match(/^(.*?)\\\]\s*$/);
+        if (e3) { if (e3[1].trim()) tex2.push(e3[1]); i++; }
+        else {
+          if (l0.trim()) tex2.push(l0);
+          i++;
+          while (i < lines.length) {
+            var e4 = lines[i].match(/^(.*?)\\\]\s*$/);
+            if (e4) { if (e4[1].trim()) tex2.push(e4[1]); i++; break; }
+            tex2.push(lines[i]); i++;
+          }
+        }
+        var mb2 = document.createElement('div');
+        mb2.className = 'ai-math-block';
+        mb2.appendChild(mdMath(tex2.join('\n').trim(), true));
+        frag.appendChild(mb2);
+        continue;
+      }
+      var hm = ln.match(/^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+      if (hm) {
+        flush();
+        var h = document.createElement('h' + hm[1].length);
+        mdInline(h, hm[2]);
+        frag.appendChild(h);
+        i++;
+        continue;
+      }
+      if (/^ {0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/.test(ln)) {
+        flush();
+        frag.appendChild(document.createElement('hr'));
+        i++;
+        continue;
+      }
+      if (/^ {0,3}>/.test(ln)) {
+        flush();
+        var q = [];
+        while (i < lines.length && /^ {0,3}>/.test(lines[i])) {
+          q.push(lines[i].replace(/^ {0,3}>\s?/, '')); i++;
+        }
+        var bq = document.createElement('blockquote');
+        bq.appendChild(mdBlocks(q.join('\n')));
+        frag.appendChild(bq);
+        continue;
+      }
+      if (/^\s*\|.*\|\s*$/.test(ln) && i + 1 < lines.length &&
+          /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+        flush();
+        var head = mdRow(ln);
+        i += 2;
+        var table = document.createElement('table');
+        var thead = document.createElement('thead');
+        var trh = document.createElement('tr');
+        head.forEach(function (c) {
+          var th = document.createElement('th');
+          mdInline(th, c);
+          trh.appendChild(th);
+        });
+        thead.appendChild(trh);
+        table.appendChild(thead);
+        var tbody = document.createElement('tbody');
+        while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) {
+          var tds = mdRow(lines[i]);
+          var tr = document.createElement('tr');
+          tds.forEach(function (c) {
+            var td = document.createElement('td');
+            mdInline(td, c);
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+          i++;
+        }
+        table.appendChild(tbody);
+        frag.appendChild(table);
+        continue;
+      }
+      var lm = ln.match(/^ {0,3}([-*+]|\d+[.)])\s+(.*)$/);
+      if (lm) {
+        flush();
+        var ordered = /\d/.test(lm[1]);
+        var list = document.createElement(ordered ? 'ol' : 'ul');
+        while (i < lines.length) {
+          var m2 = lines[i].match(/^ {0,3}([-*+]|\d+[.)])\s+(.*)$/);
+          if (!m2) break;
+          var li = document.createElement('li');
+          mdInline(li, m2[2]);
+          list.appendChild(li);
+          i++;
+        }
+        frag.appendChild(list);
+        continue;
+      }
+      para.push(ln);
+      i++;
+    }
+    flush();
+    return frag;
+  }
+  // 把 Markdown 渲染进元素；原文留在 dataset.raw，复制按钮用它
+  function mdInto(el, text) {
+    el.textContent = '';
+    el.classList.add('ai-md');
+    el.dataset.raw = String(text == null ? '' : text);
+    el.appendChild(mdBlocks(text));
+    typesetMath(el);
+  }
+
   var root = document.createElement('div');
   root.id = '__ai';
 
@@ -407,7 +715,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.5';
+  ver.textContent = 'v3.6';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -1313,7 +1621,7 @@
 
   // ── 聊天室（GitLab 仓库 message/ 目录，所有人共享可见） ──
   var K_ROOM_CACHE = 'fh:ai:roomCache';
-  var roomOv = null, roomBody = null, roomRow = null, roomNick = null, roomInput = null, roomSend = null;
+  var roomOv = null, roomBody = null, roomRow = null, roomInput = null, roomSend = null;
   var roomTimer = null, roomMsgs = [], roomObj = {}, roomBusy = false;
   function loadRoomCache() {
     try {
@@ -1352,7 +1660,8 @@
       var mine = m.owner && m.owner === ownerTag;
       var line = div('ai-line' + (mine ? ' me' : ''));
       var n = div('n', (m.nick || '匿名') + ' · ' + fmtAt(m.at));
-      var b = div('m', m.text || '');
+      var b = div('m');
+      mdInto(b, m.text || '');
       if (m.image) {
         var im = document.createElement('img');
         im.alt = '图片';
@@ -1428,9 +1737,8 @@
       roomOv.tit.textContent = '聊天室需要先在 🔑 里保存「上传 Token」';
       return;
     }
-    var nick = String((roomNick && roomNick.value) || cfg.nick || ('用户' + ownerTag.slice(-4))).trim().slice(0, 20);
-    cfg.nick = nick;
-    save(K_NICK, nick);
+    // 昵称固定用登录用户名（需求 7），不再让用户单独填
+    var nick = String(acctRec().user || '').trim().slice(0, 20);
     roomBusy = true;
     roomSend.disabled = true;
     roomSend.textContent = '发送中';
@@ -1461,30 +1769,43 @@
       roomOv = regOverlay(mkOv('聊天室（共享）'));
       roomOv.onHide = function () {
         if (roomTimer) { clearInterval(roomTimer); roomTimer = null; }
+        if (root.classList.contains('ai-full')) toggleFull(false);
       };
       var bar = roomOv.bar;
       var ref = button('刷新', 'ai-mini', '重新拉取');
       ref.onclick = function () { refreshRoom(); };
+      // 聊天室也能全屏（复用 AI 自身的 ⛶，和头栏图标同步）
+      var roomFull = button('⛶', 'ai-mini', '全屏');
+      roomFull.onclick = function (e) { e.stopPropagation(); toggleFull(); };
       bar.insertBefore(ref, bar.lastChild);
+      bar.insertBefore(roomFull, ref);
+      fullBtns.push(roomFull);
       roomBody = roomOv.body;
       roomRow = div('ai-roomrow');
-      roomNick = document.createElement('input');
-      roomNick.type = 'text';
-      roomNick.placeholder = '昵称';
-      roomNick.style.cssText = 'flex:0 0 68px;min-width:0';
-      roomNick.value = cfg.nick || '';
       roomInput = document.createElement('input');
       roomInput.type = 'text';
       roomInput.placeholder = '发到聊天室（所有人可见）';
       roomInput.maxLength = 2000;
       roomSend = button('发送', '');
-      roomRow.append(roomNick, roomInput, roomSend);
+      roomRow.append(roomInput, roomSend);
       roomOv.el.append(roomRow);
       roomSend.onclick = function (e) { e.stopPropagation(); sendRoom(); };
       roomInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); sendRoom(); }
       });
+      roomSend.disabled = true;
+      roomSend.style.opacity = '.5';
+      syncFullBtns();
     }
+    // 昵称固定用登录用户名（需求 7）：没登录 / 没 Token 时禁用输入
+    var acctNow = acctRec();
+    var canSend = !!(acctNow && cfg.gitToken);
+    roomInput.disabled = !canSend;
+    roomSend.disabled = !canSend;
+    roomSend.style.opacity = canSend ? '' : '.5';
+    roomInput.placeholder = !acctNow
+      ? '请先在 👤 登录（用户名 + PIN）'
+      : (!cfg.gitToken ? '请先在 🔑 保存上传 Token' : '发到聊天室（所有人可见）');
     roomOv.el.classList.add('on');
     if (overlayStack.indexOf(roomOv) < 0) overlayStack.push(roomOv);
     roomMsgs = loadRoomCache();
@@ -1641,7 +1962,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.5 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.6 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -1727,7 +2048,7 @@
 
       var cp = button('复制', 'ai-copy', '复制回答');
       cp.onclick = function () {
-        copyText(bubble.textContent, function (ok) {
+        copyText(bubble.dataset.raw || bubble.textContent, function (ok) {
           cp.textContent = ok ? '已复制' : '失败';
           setTimeout(function () { cp.textContent = '复制'; }, 1200);
         });
@@ -1735,7 +2056,11 @@
       meta.append(cp);
     }
 
-    var bubble = div('ai-bubble', text || '');
+    var bubble = div('ai-bubble');
+    if (text) {
+      if (role === 'assistant') mdInto(bubble, text);
+      else bubble.textContent = text;
+    }
     if (meta) body.append(meta);
     if (think) body.append(think);
     body.append(bubble);
@@ -2409,6 +2734,8 @@
       if (reasoning) {
         ui.thinkSum.textContent = '思考过程 · ' + reasoning.length + ' 字（点开）';
       }
+      // 流式过程是纯文本，结束后一次性按 Markdown / LaTeX 渲染
+      if (content) mdInto(ui.bubble, content);
       if (same) {
         history.push({ role: 'assistant', content: content, reasoning: reasoning || undefined });
         saveHistory();
@@ -2727,11 +3054,28 @@
     baseIn.value = b;
     save(K_BASE, b);
   };
+  var fullBtns = [fullBtn];
+  function syncFullBtns() {
+    var on = root.classList.contains('ai-full');
+    fullBtns.forEach(function (b) {
+      if (!b) return;
+      b.textContent = on ? '⤡' : '⛶';
+      b.title = on ? '退出全屏' : '全屏';
+    });
+  }
   function toggleFull(force) {
     var on = typeof force === 'boolean' ? force : !root.classList.contains('ai-full');
     root.classList.toggle('ai-full', on);
-    fullBtn.textContent = on ? '⤡' : '⛶';
-    fullBtn.title = on ? '退出全屏' : '全屏';
+    if (on) {
+      // loader 拖动会往 #__ai 写内联尺寸/位置，会和全屏 CSS 打架，进全屏时清掉
+      root.dataset.fhFloat = '0';
+      ['left', 'top', 'right', 'bottom', 'width', 'height', 'maxHeight',
+       'borderRadius', 'boxShadow', 'transform', 'overflow'].forEach(function (k) {
+        root.style[k] = '';
+      });
+      root.style.inset = '';
+    }
+    syncFullBtns();
   }
   fullBtn.onclick = function (e) {
     e.stopPropagation();
@@ -2789,9 +3133,10 @@
     if (e.key !== 'Escape') return;
     if (zoomCloseFn) { zoomCloseFn(); return; }
     if (viewer && viewer.classList.contains('on')) { viewer.classList.remove('on'); return; }
+    // 先退全屏，再关覆盖层（聊天室全屏时 Esc 一步退全屏）
+    if (root.classList.contains('ai-full')) { toggleFull(false); return; }
     if (overlayStack.length) { overlayStack[overlayStack.length - 1].el.hide(); return; }
     if (cfgBox.classList.contains('on')) { openCfg(false); return; }
-    if (root.classList.contains('ai-full')) { toggleFull(false); return; }
     close();
   }
   closeBtn.onclick = close;

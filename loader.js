@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.5';
+  var TAG = '3.6';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -235,9 +235,12 @@
   }
 
   // ── v3.3 配置同步（加密存 GitLab；PIN 解锁；Token/管理员密钥可重置 PIN） ──
-  var CFG_PROJ = '88544686';
+  // v3.6：配置统一传到 AI 用的私有仓库（AI 聊天室/相册早就在这里）。
+  // 仓库私有，所以读接口也要带 Token；新设备先填读权限 Token，再输 PIN 解密。
+  var CFG_PROJ = 'yq-group2/fuulea_ai_repository';
   var CFG_BRANCH = 'main';
   var CFG_DIR = 'config/';
+  var CFG_RTOK_KEY = 'fh:cfg:rTok';   // 只用于读配置的 Token（恢复成功后不保留）
   var CFG_ID_KEY = 'fh:cfg:id';
   var CFG_AT_KEY = 'fh:cfg:at';
   var CFG_ADM_KEY = 'fh:cfg:admKey';
@@ -361,8 +364,15 @@
     });
     return n;
   }
+  // 项目路径含 '/'，GitLab API 里必须整体编码成 %2F
+  function cfgProj() {
+    return encodeURIComponent(CFG_PROJ);
+  }
+  function cfgTokenRead() {
+    return cfgTokenLocal() || cfgLs(CFG_RTOK_KEY);
+  }
   function cfgUrl(p) {
-    return 'https://gitlab.com/api/v4/projects/' + CFG_PROJ + '/repository/files/' +
+    return 'https://gitlab.com/api/v4/projects/' + cfgProj() + '/repository/files/' +
       encodeURIComponent(p) + '/raw?ref=' + CFG_BRANCH + '&t=' + Date.now();
   }
   function cfgReq(method, url, text, token) {
@@ -379,22 +389,25 @@
       x.send(text || null);
     });
   }
-  function cfgList() {
-    var url = 'https://gitlab.com/api/v4/projects/' + CFG_PROJ + '/repository/tree?path=config&ref=' +
+  // 返回 { ok, status, items }：私有仓库没 Token 时会 401/403/404，调用方要能区分
+  function cfgList(tok) {
+    var token = (tok === undefined) ? cfgTokenRead() : tok;
+    var url = 'https://gitlab.com/api/v4/projects/' + cfgProj() + '/repository/tree?path=config&ref=' +
       CFG_BRANCH + '&per_page=100&t=' + Date.now();
-    return cfgReq('GET', url).then(function (r) {
-      var arr = [];
-      if (!r.ok) return arr;
+    return cfgReq('GET', url, null, token).then(function (r) {
+      var out = { ok: r.ok, status: r.status, items: [] };
+      if (!r.ok) return out;
       try {
         JSON.parse(r.text).forEach(function (it) {
-          if (it && it.type === 'blob' && /^config\/[^\/]+\.json$/.test(it.path)) arr.push(it.path);
+          if (it && it.type === 'blob' && /^config\/[^\/]+\.json$/.test(it.path)) out.items.push(it.path);
         });
       } catch (e) {}
-      return arr;
+      return out;
     });
   }
-  function cfgGet(path) {
-    return cfgReq('GET', cfgUrl(path)).then(function (r) {
+  function cfgGet(path, tok) {
+    var token = (tok === undefined) ? cfgTokenRead() : tok;
+    return cfgReq('GET', cfgUrl(path), null, token).then(function (r) {
       if (!r.ok) return null;
       try { return JSON.parse(r.text); } catch (e) { return null; }
     });
@@ -406,7 +419,7 @@
       encoding: 'text',
       commit_message: 'config ' + obj.id + ' @ ' + new Date().toISOString()
     });
-    var u = 'https://gitlab.com/api/v4/projects/' + CFG_PROJ + '/repository/files/' + encodeURIComponent(path);
+    var u = 'https://gitlab.com/api/v4/projects/' + cfgProj() + '/repository/files/' + encodeURIComponent(path);
     return cfgReq('PUT', u, body, token).then(function (r) {
       if (r.ok) return r;
       return cfgReq('POST', u, body, token).then(function (r2) {
@@ -521,10 +534,24 @@
     cfgUpload(pin, !cfgLs(CFG_ID_KEY), tok, function (s) { d.stat.textContent = s; }).then(function (r) {
       if (!r.ok) {
         d.body.innerHTML = '';
+        d.stat.textContent = '';
         var err = document.createElement('div');
         err.style.cssText = 'font-size:12px;color:#ff9b9b;word-break:break-all';
         err.textContent = '上传失败（' + (r.status || '网络') + '）：' +
           String(r.text || '').replace(/\s+/g, ' ').slice(0, 160);
+        if (r.status === 401 || r.status === 403 || r.status === 404) {
+          var e2 = document.createElement('div');
+          e2.style.cssText = 'font-size:11.5px;color:#ffcf8a;line-height:1.6';
+          e2.textContent = 'Token 对 ' + CFG_PROJ + ' 没有写权限（需要 Developer/Maintainer 及以上）。仓库是私有的，Token 还要有 read_api 才能读取。';
+          err.textContent = '上传失败（' + r.status + '）：Token 无权写入该仓库';
+          d.body.append(err, e2);
+          var again0 = cfgBtn('重试', '#3a6df0');
+          again0.onclick = function () { d.close(); uploadConfig(); };
+          var cls0 = cfgBtn('关闭');
+          cls0.onclick = d.close;
+          d.body.append(again0, cls0);
+          return;
+        }
         d.body.append(err);
         var again = cfgBtn('重试', '#3a6df0');
         again.onclick = function () { d.close(); uploadConfig(); };
@@ -586,14 +613,25 @@
     };
   }
 
-  async function cfgPull(pin, say) {
+  async function cfgPull(pin, say, tokArg) {
     var stat = say || function () {};
+    var tok = (tokArg === undefined) ? cfgTokenRead() : tokArg;
     stat('读取云端配置列表…');
-    var files = await cfgList();
+    var listed = await cfgList(tok);
+    if (!listed.ok) {
+      var auth = (listed.status === 401 || listed.status === 403 || listed.status === 404);
+      return {
+        ok: false, auth: auth, status: listed.status,
+        msg: auth
+          ? ('读取失败（' + listed.status + '）：该仓库是私有的，Token 需有 ' + CFG_PROJ + ' 的读权限')
+          : ('读取云端配置失败（' + (listed.status || '网络') + '）')
+      };
+    }
+    var files = listed.items;
     if (!files.length) return { ok: false, msg: '云端暂无配置' };
     for (var i = 0; i < files.length; i++) {
       stat('尝试 ' + (i + 1) + '/' + files.length + '：' + files[i]);
-      var o = await cfgGet(files[i]);
+      var o = await cfgGet(files[i], tok);
       if (!o || !o.kdf || !o.wrapPin || !o.box) continue;
       try {
         var k = await cfgKdf('pin|' + o.id + '|' + pin, o.kdf.salt);
@@ -605,27 +643,72 @@
         cfgSet(CFG_ID_KEY, o.id);
         cfgSet(CFG_AT_KEY, o.at || new Date().toISOString());
         cfgPinSet(pin);
+        try { localStorage.removeItem(CFG_RTOK_KEY); } catch (e) {}
         return { ok: true, n: n, id: o.id };
       } catch (e) {}
     }
     return { ok: false, msg: 'PIN 不正确，或云端没有对应的配置' };
   }
 
-  function cfgPullUi(pin) {
+  // 私有仓库：新设备先要一个读权限 Token（只用于本次恢复；恢复成功后会用备份里的真 Token 覆盖）
+  function cfgAskToken(then) {
+    var d = cfgDialog('🔑 私有仓库需要读取 Token');
+    var tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11.5px;color:#8a8a99;line-height:1.6';
+    tip.textContent = '配置仓库 ' + CFG_PROJ + ' 是私有的。请填一个有该仓库读权限的 GitLab Token（read_api 即可），验证通过后再输入恢复 PIN。';
+    d.body.append(tip);
+    var tIn = cfgField(d.body, 'GitLab Token（读权限）', { type: 'password' });
+    tIn.value = cfgLs(CFG_RTOK_KEY) || '';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
+    var okBtn = cfgBtn('继续', '#3a6df0');
+    var cancel = cfgBtn('取消');
+    row.append(okBtn, cancel);
+    d.body.append(row);
+    cancel.onclick = d.close;
+    okBtn.onclick = function () {
+      var t = tIn.value.trim();
+      if (!t) { d.stat.textContent = '请填 Token'; return; }
+      okBtn.disabled = true;
+      d.stat.textContent = '验证 Token…';
+      cfgList(t).then(function (res) {
+        okBtn.disabled = false;
+        if (!res.ok) {
+          d.stat.textContent = 'Token 无效或没有读权限（' + (res.status || '网络') + '）';
+          return;
+        }
+        cfgSet(CFG_RTOK_KEY, t);
+        d.close();
+        then(t);
+      });
+    };
+    setTimeout(function () { try { tIn.focus(); } catch (e) {} }, 60);
+  }
+
+  function cfgPullUi(pin, tok) {
     var d = cfgDialog('⬇ 从云端恢复配置');
     var tip = document.createElement('div');
     tip.style.cssText = 'font-size:11.5px;color:#8a8a99';
     tip.textContent = '使用本机保存的恢复 PIN 自动恢复，不需要手动输入。';
     d.body.append(tip);
     d.stat.textContent = '准备中…';
-    cfgPull(pin, function (s) { d.stat.textContent = s; }).then(function (r) {
+    cfgPull(pin, function (s) { d.stat.textContent = s; }, tok).then(function (r) {
       if (!r.ok) {
         d.body.innerHTML = '';
+        d.stat.textContent = '';
         var err = document.createElement('div');
-        err.style.cssText = 'font-size:12px;color:#ff9b9b';
+        err.style.cssText = 'font-size:12px;color:#ff9b9b;line-height:1.6';
         err.textContent = r.msg || '恢复失败';
         d.body.append(err);
-        var retry = cfgBtn('手动输入 PIN', '#3a6df0');
+        if (r.auth) {
+          var rt = cfgBtn('重填 Token', '#3a6df0');
+          rt.onclick = function () {
+            d.close();
+            cfgAskToken(function (t) { cfgPullUi(pin, t); });
+          };
+          d.body.append(rt);
+        }
+        var retry = cfgBtn('手动输入 PIN', r.auth ? undefined : '#3a6df0');
         retry.onclick = function () { d.close(); pullConfigAsk(); };
         var cls = cfgBtn('关闭');
         cls.onclick = d.close;
@@ -677,8 +760,16 @@
       acctOpen(pullConfig);
       return;
     }
+    var tok = cfgTokenRead();
     var pin = cfgPinGet();
-    if (pin) { cfgPullUi(pin); return; }
+    // 仓库私有：没有任何 Token 时先要读权限 Token，再走 PIN
+    if (!tok) {
+      cfgAskToken(function (t) {
+        if (pin) cfgPullUi(pin, t); else pullConfigAsk();
+      });
+      return;
+    }
+    if (pin) { cfgPullUi(pin, tok); return; }
     pullConfigAsk();
   }
 
@@ -704,15 +795,16 @@
       var np = pin.value.trim();
       if (!cfgPinOk(np)) { d.stat.textContent = '新 PIN 需 6-30 位且不含空格'; return; }
       if (pin2.value.trim() !== np) { d.stat.textContent = '两次 PIN 不一致'; return; }
-      var tok = tokIn.value.trim() || cfgLs('fh:ai:gitToken');
+      var tok = tokIn.value.trim() || cfgTokenRead();
       var ak = admIn.value.trim() || cfgLs(CFG_ADM_KEY);
-      if (!tok && !ak) { d.stat.textContent = '请填 Token 或管理员密钥'; return; }
+      if (!tok) { d.stat.textContent = '读取私有仓库需要 Token（读权限即可）；管理员密钥只用于解包'; return; }
       okBtn.disabled = true;
-      var files = idIn.value.trim() ? [CFG_DIR + idIn.value.trim().replace(/^config\//, '').replace(/\.json$/, '') + '.json'] : await cfgList();
-      if (!files.length) { okBtn.disabled = false; d.stat.textContent = '云端暂无配置'; return; }
+      var listed = idIn.value.trim() ? { ok: true, items: [CFG_DIR + idIn.value.trim().replace(/^config\//, '').replace(/\.json$/, '') + '.json'] } : await cfgList(tok);
+      var files = listed.items || [];
+      if (!files.length) { okBtn.disabled = false; d.stat.textContent = listed.ok ? '云端暂无配置' : ('读取失败（' + (listed.status || '网络') + '）：Token 需有该仓库读权限'); return; }
       for (var i = 0; i < files.length; i++) {
         d.stat.textContent = '尝试 ' + (i + 1) + '/' + files.length + '：' + files[i];
-        var o = await cfgGet(files[i]);
+        var o = await cfgGet(files[i], tok);
         if (!o || !o.kdf) continue;
         var raw = null;
         if (tok && o.wrapTok) {
@@ -754,7 +846,9 @@
       sessionStorage.setItem('fh:cfg:probe', '1');
     } catch (e) { return; }
     if (!cfgReady()) return;
-    cfgList().then(function (files) {
+    if (!cfgTokenRead()) return;   // 私有仓库：没有 Token 就不探测，等用户点「⬇ 更新配置」
+    cfgList().then(function (res) {
+      var files = (res && res.ok && res.items) || [];
       if (!files.length) return;
       var t = document.createElement('div');
       t.id = '__fhcfgtoast';
@@ -1027,12 +1121,13 @@
       ['👤 账号（用户名 + PIN）', acctOpen],
       ['⬆ 上传配置', uploadConfig],
       ['⬇ 更新配置', pullConfig],
+      ['🔄 版本更新', 'mods/update.js'],
       ['⏱ 解除限时', toggleLockFree],
       ['💣 清空', 'mods/reset.js']
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.5', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.6', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
@@ -1114,6 +1209,11 @@
       'box-shadow:0 10px 26px rgba(0,0,0,.5)}',
       '#__fh.is-mini .fh-head{padding:5px 6px;gap:2px;justify-content:center;cursor:move}',
       '#__fh.is-mini .fh-title,#__fh.is-mini .fh-tabs,#__fh.is-mini .fh-content,#__fh.is-mini .fh-min{display:none}',
+      // 迷你态只留猫头 + 关闭：之前 4 个图标挤在 88px 里把猫头裁掉，导致点不到还原入口
+      '#__fh.is-mini .fh-acct,#__fh.is-mini .fh-theme,#__fh.is-mini .fh-mainop{display:none}',
+      '#__fh.is-mini .fh-panel{cursor:pointer}',
+      '#__fh.is-mini .fh-close{position:absolute;right:2px;top:50%;transform:translateY(-50%)}',
+      '#__fh.is-mini .fh-head{position:relative;padding-right:24px}',
       '#__fh.is-mini .fh-ico{width:26px;height:26px;font:13px/1 inherit;border-radius:50%}',
       '#__fh.is-mini .fh-cat{width:32px;height:32px;font-size:20px}'
     ].join('');
@@ -1149,7 +1249,9 @@
   var minBtn = icon('−', '收起成小圆点');
   minBtn.className = 'fh-ico fh-min';
   var themeBtn = icon('🌓', '深色 / 浅色');
+  themeBtn.classList.add('fh-theme');
   var acctBtn = icon('👤', '账号（用户名 + PIN）');
+  acctBtn.classList.add('fh-acct');
   acctBtn.onclick = function () { acctOpen(); };
   function acctBtnState() {
     var r = acctCur();
@@ -1159,6 +1261,7 @@
   acctBtnState();
   try { window.addEventListener('fh:acct', acctBtnState); } catch (e) {}
   var mainOpBtn = icon('◐', '主面板透明度');
+  mainOpBtn.classList.add('fh-mainop');
   var light = false;
   try { light = localStorage.getItem('fh:theme') === 'light'; } catch (e) {}
   if (light) root.classList.add('fh-light');
@@ -1403,7 +1506,9 @@
   // 小窗
   var mini = false;
   var savedW = '', savedH = '', savedMax = '', savedPos = null;
-  minBtn.onclick = function () {
+  minBtn.onclick = function (e) {
+    // 阻止冒泡：否则点「−」收起后，head 的点击处理会把它当成「点胶囊展开」再切回去
+    if (e && e.stopPropagation) e.stopPropagation();
     mini = !mini;
     if (mini) mainOpPop.style.display = 'none';
     root.classList.toggle('is-mini', mini);
@@ -1422,11 +1527,13 @@
       root.style.left = 'auto'; root.style.top = 'auto';
       root.style.right = '14px'; root.style.bottom = '14px';
       pGrip.style.display = 'none';
+      panel.title = '点击展开 fuulea_hack';
     } else {
       panel.style.width = savedW;
       panel.style.height = savedH;
       panel.style.maxHeight = savedMax;
       pGrip.style.display = 'block';
+      panel.title = '';
       if (savedPos) {
         root.style.left = savedPos.left; root.style.top = savedPos.top;
         root.style.right = savedPos.right; root.style.bottom = savedPos.bottom;
@@ -1434,10 +1541,10 @@
     }
   };
 
-  // 小窗态下点猫头展开
+  // 小窗态下点猫头 / 空白处展开（关闭按钮除外）
   head.addEventListener('click', function (e) {
     if (dragMoved) { dragMoved = false; return; }
-    if (mini && (e.target === head || e.target === cat || e.target === title)) {
+    if (mini && e.target !== closeBtn) {
       minBtn.onclick();
       e.stopPropagation();
     }
@@ -1526,12 +1633,16 @@
         'border-radius:9px;background:transparent;color:#8a8a99;font:16px/1 inherit;cursor:pointer;flex-shrink:0';
       xb.parentNode.insertBefore(opBtn, xb);
 
-      var mb = document.createElement('button');
-      mb.textContent = '\u25f1';
-      mb.title = '小窗 / 全屏';
-      mb.style.cssText = 'min-width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;' +
-        'border-radius:9px;background:transparent;color:#8a8a99;font:15px/1 inherit;cursor:pointer;flex-shrink:0';
-      xb.parentNode.insertBefore(mb, xb);
+      // AI 网页自己有 ⛶ 全屏按钮（需求 3）：不重复注入，只保留置顶 / 透明度 / 拖动 / 缩放
+      var mb = null;
+      if (el.id !== '__ai') {
+        mb = document.createElement('button');
+        mb.textContent = '\u25f1';
+        mb.title = '小窗 / 全屏';
+        mb.style.cssText = 'min-width:34px;height:34px;display:grid;place-items:center;padding:0;border:0;' +
+          'border-radius:9px;background:transparent;color:#8a8a99;font:15px/1 inherit;cursor:pointer;flex-shrink:0';
+        xb.parentNode.insertBefore(mb, xb);
+      }
 
       // 右下角缩放手柄
       var grip = document.createElement('div');
@@ -1619,7 +1730,7 @@
         el.style.boxShadow = '0 20px 60px rgba(0,0,0,.6)';
         el.style.overflow = 'hidden';
         grip.style.display = 'block';
-        mb.style.color = '#5b8dfa';
+        if (mb) mb.style.color = '#5b8dfa';
       }
       function toFull() {
         el.dataset.fhFloat = '0';
@@ -1636,9 +1747,9 @@
         el.style.boxShadow = '';
         el.style.overflow = '';
         grip.style.display = 'none';
-        mb.style.color = '#8a8a99';
+        if (mb) mb.style.color = '#8a8a99';
       }
-      mb.onclick = function (e) {
+      if (mb) mb.onclick = function (e) {
         e.stopPropagation();
         if (el.dataset.fhFloat === '1') toFull(); else toFloat();
       };
