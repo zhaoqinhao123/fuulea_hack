@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.4';
+  var TAG = '3.5';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -241,6 +241,8 @@
   var CFG_ID_KEY = 'fh:cfg:id';
   var CFG_AT_KEY = 'fh:cfg:at';
   var CFG_ADM_KEY = 'fh:cfg:admKey';
+  var CFG_PIN_KEY = 'fh:cfg:pin';     // v3.5：本机保存的恢复 PIN（上传时自动生成，不再让用户填）
+  var CFG_PIN_T = 'fh:cfg:pinAt';
   var CFG_ITER = 150000;
 
   function cfgLs(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
@@ -289,12 +291,55 @@
   }
   function cfgExport(key) { return crypto.subtle.exportKey('raw', key).then(cfgB64); }
   function cfgPinOk(p) { return /^[^\s]{6,30}$/.test(String(p || '')); }
+  // v3.5：本地恢复 PIN（自动生成、自动保存；只有换设备/清缓存时才需要用户输入）
+  function cfgPinGet() {
+    var p = cfgLs(CFG_PIN_KEY);
+    return cfgPinOk(p) ? p : '';
+  }
+  function cfgPinSet(p) {
+    if (!cfgPinOk(p)) return false;
+    cfgSet(CFG_PIN_KEY, p);
+    cfgSet(CFG_PIN_T, String(Date.now()));
+    return true;
+  }
+  function cfgPinNew() {
+    var abc = 'abcdefghjkmnpqrstuvwxyz23456789', s = 'FH', r = cfgBytes(12);
+    for (var i = 0; i < 12; i++) {
+      if (i === 4 || i === 8) s += '-';
+      s += abc.charAt(r[i] % abc.length);
+    }
+    return s;   // 形如 FH7k2m-9xq4-p3wd
+  }
+  function cfgTokenLocal() {
+    var t = cfgLs('fh:ai:gitToken');
+    if (!t) { var a = acctCur(); if (a) t = String(a.gitToken || ''); }
+    return t;
+  }
+  function cfgCopy(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {}
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0';
+      document.body.append(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      ta.remove();
+      return ok;
+    } catch (e) { return false; }
+  }
   function cfgExcluded(k) {
     if (k.indexOf('fh:') !== 0) return true;
     if (k === 'fh:ai:key' || k === 'fh:ai:gitToken' || k === 'fh:ai:sessions' || k === 'fh:ai:sid') return true;
     if (k === 'fh:ai:roomCache' || k === 'fh:cmdhist') return true;
     if (k === 'fh:acct' || k === 'fh:acct:try') return true;
     if (k === CFG_ID_KEY || k === CFG_AT_KEY || k === CFG_ADM_KEY) return true;
+    if (k === CFG_PIN_KEY || k === CFG_PIN_T) return true;
     if (k.indexOf('fh:ai:hist:') === 0 || k.indexOf('fh:mod:') === 0) return true;
     return false;
   }
@@ -416,6 +461,96 @@
     return inp;
   }
 
+  // v3.5：上传配置不再要求用户设置 PIN —— 首次自动生成并保存在本机，
+  // 有 Token 时一键上传，只有缺 Token 才弹一个输入框。
+  async function cfgUpload(pin, fresh, tok, say) {
+    var stat = say || function () {};
+    var id = fresh ? cfgNewId() : (cfgLs(CFG_ID_KEY) || cfgNewId());
+    var salt = cfgB64(cfgBytes(16));
+    var dk = await cfgImport(cfgB64(cfgBytes(32)));
+    var dkRaw = await cfgExport(dk);
+    var keys = cfgCollect();
+    var now = new Date().toISOString();
+    stat('加密并上传 ' + Object.keys(keys).length + ' 项配置…');
+    var payload = {
+      v: 1, at: now, tag: TAG, id: id,
+      kdf: { salt: salt, iter: CFG_ITER },
+      hint: cfgLs('fh:ai:nick') || 'fuulea_hack',
+      wrapPin: await cfgEnc(await cfgKdf('pin|' + id + '|' + pin, salt), dkRaw),
+      wrapTok: await cfgEnc(await cfgKdf('tok|' + id + '|' + tok, salt), dkRaw),
+      box: await cfgEnc(dk, { tok: tok, keys: keys })
+    };
+    var ak = cfgLs(CFG_ADM_KEY);
+    if (ak) payload.wrapAdm = await cfgEnc(await cfgKdf('adm|' + id + '|' + ak, salt), dkRaw);
+    var r = await cfgPut(CFG_DIR + id + '.json', payload, tok);
+    if (!r.ok) return { ok: false, status: r.status, text: r.text, id: id };
+    cfgSet(CFG_ID_KEY, id);
+    cfgSet(CFG_AT_KEY, now);
+    cfgPinSet(pin);
+    cfgSet('fh:ai:gitToken', tok);
+    acctSetField('gitToken', tok);
+    return { ok: true, id: id, n: Object.keys(keys).length };
+  }
+
+  function cfgPinBox(box, pin) {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'border:1px dashed #3d5a8a;border-radius:10px;padding:8px 10px;background:#182234';
+    var t = document.createElement('div');
+    t.style.cssText = 'font-size:11px;color:#8aa8d8';
+    t.textContent = '恢复 PIN（已自动保存到本机；换设备恢复配置时要用）';
+    var v = document.createElement('div');
+    v.textContent = pin;
+    v.style.cssText = 'font:700 15px/1.6 ui-monospace,monospace;color:#9fc0ff;letter-spacing:.5px;word-break:break-all';
+    var cp = cfgBtn('复制 PIN');
+    cp.onclick = function () {
+      if (cfgCopy(pin)) fhToast('📋 PIN 已复制');
+      else fhToast('复制失败，请手动选中上面的 PIN');
+    };
+    wrap.append(t, v, cp);
+    box.append(wrap);
+    return wrap;
+  }
+
+  function cfgUploadUi(pin, tok) {
+    var d = cfgDialog('⬆ 上传配置到云端');
+    var tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11.5px;color:#8a8a99';
+    tip.textContent = 'PIN 已自动生成并保存在本机，无需手动设置。';
+    d.body.append(tip);
+    d.stat.textContent = '准备中…';
+    cfgUpload(pin, !cfgLs(CFG_ID_KEY), tok, function (s) { d.stat.textContent = s; }).then(function (r) {
+      if (!r.ok) {
+        d.body.innerHTML = '';
+        var err = document.createElement('div');
+        err.style.cssText = 'font-size:12px;color:#ff9b9b;word-break:break-all';
+        err.textContent = '上传失败（' + (r.status || '网络') + '）：' +
+          String(r.text || '').replace(/\s+/g, ' ').slice(0, 160);
+        d.body.append(err);
+        var again = cfgBtn('重试', '#3a6df0');
+        again.onclick = function () { d.close(); uploadConfig(); };
+        var cls = cfgBtn('关闭');
+        cls.onclick = d.close;
+        d.body.append(again, cls);
+        return;
+      }
+      d.body.innerHTML = '';
+      var ok = document.createElement('div');
+      ok.style.cssText = 'font-size:12px;color:#7ee2a8';
+      ok.textContent = '✅ 已上传 ' + r.n + ' 项配置（ID ' + r.id + '）';
+      d.body.append(ok);
+      cfgPinBox(d.body, pin);
+      var hint = document.createElement('div');
+      hint.style.cssText = 'font-size:11px;color:#8a8a99;line-height:1.6';
+      hint.textContent = '以后点「⬆ 上传配置」直接覆盖云端，不再询问 PIN；点「⬇ 更新配置」本机直接恢复，也不用输入 PIN。';
+      d.body.append(hint);
+      var done = cfgBtn('完成', '#3a6df0');
+      done.onclick = d.close;
+      d.body.append(done);
+      d.stat.textContent = '';
+      fhToast('⬆ 配置已上传到云端');
+    });
+  }
+
   function uploadConfig() {
     if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
     if (!acctCur()) {
@@ -423,18 +558,19 @@
       acctOpen(uploadConfig);
       return;
     }
-    var hasId = !!cfgLs(CFG_ID_KEY);
-    var d = cfgDialog(hasId ? '⬆ 上传配置（更新云端）' : '⬆ 上传配置（首次）');
-    if (hasId) {
-      var tip = document.createElement('div');
-      tip.style.cssText = 'font-size:11.5px;color:#8a8a99';
-      tip.textContent = '配置 ID：' + cfgLs(CFG_ID_KEY) + '（用 PIN 解密云端 Token）';
-      d.body.append(tip);
-    }
-    var tIn = cfgField(d.body, hasId ? 'GitLab Token（可留空，用 PIN 解出的 Token）' : 'GitLab Token（写权限；仅本次使用，之后用 PIN 代替）', { type: 'password' });
-    var pin = cfgField(d.body, 'PIN（6-30 位，字母/数字/符号）', { type: 'password' });
-    var pin2 = hasId ? null : cfgField(d.body, '再输一次 PIN', { type: 'password' });
-    var adm = cfgField(d.body, '管理员密钥（可选，忘记 PIN 时用）', { type: 'password' });
+    var pin = cfgPinGet();
+    if (!pin) { pin = cfgPinNew(); cfgPinSet(pin); }
+
+    var tok = cfgTokenLocal();
+    if (tok) { cfgUploadUi(pin, tok); return; }
+
+    // 只有缺 Token 时才弹一个最小的窗口（PIN 不再询问）
+    var d = cfgDialog('⬆ 首次上传配置');
+    var tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11.5px;color:#8a8a99;line-height:1.6';
+    tip.textContent = '需要一次 GitLab Token（写权限）用来上传加密配置；PIN 会自动生成并保存在本机。';
+    d.body.append(tip);
+    var tIn = cfgField(d.body, 'GitLab Token', { type: 'password' });
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
     var okBtn = cfgBtn('开始上传', '#3a6df0');
@@ -442,80 +578,80 @@
     row.append(okBtn, cancel);
     d.body.append(row);
     cancel.onclick = d.close;
-
-    okBtn.onclick = async function () {
-      var p = pin.value.trim();
-      if (!cfgPinOk(p)) { d.stat.textContent = 'PIN 需 6-30 位且不含空格'; return; }
-      if (pin2 && pin2.value.trim() !== p) { d.stat.textContent = '两次 PIN 不一致'; return; }
-      var id = hasId ? cfgLs(CFG_ID_KEY) : cfgNewId();
-      var path = CFG_DIR + id + '.json';
-      var salt, dk, tok;
-      if (hasId) {
-        var t0 = tIn ? tIn.value.trim() : '';
-        if (!t0) t0 = cfgLs('fh:ai:gitToken') || (acctCur() ? (acctCur().gitToken || '') : '');
-        if (t0) tok = t0;
-        d.stat.textContent = '读取云端配置…';
-        var old = await cfgGet(path);
-        if (!old || !old.kdf || !old.wrapPin) { d.stat.textContent = '云端配置不存在，或已被删除（可清掉本机 fh:cfg:id 后重新首次上传）'; return; }
-        salt = old.kdf.salt;
-        try {
-          var k = await cfgKdf('pin|' + id + '|' + p, salt);
-          var raw = await cfgDec(k, old.wrapPin);
-          dk = await cfgImport(raw);
-          var bx = await cfgDec(dk, old.box);
-          if (!tok) tok = bx.tok || '';
-        } catch (e) { d.stat.textContent = 'PIN 不正确'; return; }
-        if (!tok) { d.stat.textContent = '没有可用的 Token（请在下方填一个）'; return; }
-      } else {
-        tok = tIn.value.trim() || cfgLs('fh:ai:gitToken') || (acctCur() ? (acctCur().gitToken || '') : '');
-        if (!tok) { d.stat.textContent = '请填 GitLab Token（或先在 AI 网页 🔑 保存）'; return; }
-        salt = cfgB64(cfgBytes(16));
-        dk = await cfgImport(cfgB64(cfgBytes(32)));
-      }
-      d.stat.textContent = '加密并上传…';
-      okBtn.disabled = true;
-      var dkRaw = await cfgExport(dk);
-      var keys = cfgCollect();
-      var now = new Date().toISOString();
-      var payload = {
-        v: 1, at: now, tag: TAG, id: id,
-        kdf: { salt: salt, iter: CFG_ITER },
-        hint: cfgLs('fh:ai:nick') || 'fuulea_hack',
-        wrapPin: await cfgEnc(await cfgKdf('pin|' + id + '|' + p, salt), dkRaw),
-        wrapTok: await cfgEnc(await cfgKdf('tok|' + id + '|' + tok, salt), dkRaw),
-        box: await cfgEnc(dk, { tok: tok, keys: keys })
-      };
-      var ak = adm.value.trim() || cfgLs(CFG_ADM_KEY);
-      if (ak) payload.wrapAdm = await cfgEnc(await cfgKdf('adm|' + id + '|' + ak, salt), dkRaw);
-      if (hasId) {
-        var prev = await cfgGet(path);
-        if (prev && prev.wrapAdm && !ak) payload.wrapAdm = prev.wrapAdm;
-      }
-      var r = await cfgPut(path, payload, tok);
-      okBtn.disabled = false;
-      if (!r.ok) {
-        d.stat.textContent = '上传失败（' + (r.status || '网络') + '）：' + (r.text || '').replace(/\s+/g, ' ').slice(0, 140);
-        return;
-      }
-      cfgSet(CFG_ID_KEY, id);
-      cfgSet(CFG_AT_KEY, now);
-      acctSetField('gitToken', tok);
-      if (ak) cfgSet(CFG_ADM_KEY, ak);
-      d.stat.textContent = '✅ 已上传 ' + Object.keys(keys).length + ' 项配置（ID ' + id + '）';
-      fhToast('⬆ 配置已上传到云端');
-      setTimeout(d.close, 1000);
+    okBtn.onclick = function () {
+      var t = tIn.value.trim();
+      if (!t) { d.stat.textContent = '请填 GitLab Token（或在 AI 网页 🔑 里保存）'; return; }
+      d.close();
+      cfgUploadUi(pin, t);
     };
   }
 
-  function pullConfig() {
-    if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
-    if (!acctCur()) {
-      fhToast('请先登录账号（用户名 + PIN）');
-      acctOpen(pullConfig);
-      return;
+  async function cfgPull(pin, say) {
+    var stat = say || function () {};
+    stat('读取云端配置列表…');
+    var files = await cfgList();
+    if (!files.length) return { ok: false, msg: '云端暂无配置' };
+    for (var i = 0; i < files.length; i++) {
+      stat('尝试 ' + (i + 1) + '/' + files.length + '：' + files[i]);
+      var o = await cfgGet(files[i]);
+      if (!o || !o.kdf || !o.wrapPin || !o.box) continue;
+      try {
+        var k = await cfgKdf('pin|' + o.id + '|' + pin, o.kdf.salt);
+        var raw = await cfgDec(k, o.wrapPin);
+        var dk = await cfgImport(raw);
+        var bx = await cfgDec(dk, o.box);
+        var n = cfgApply(bx.keys);
+        if (bx.tok) { cfgSet('fh:ai:gitToken', bx.tok); acctSetField('gitToken', bx.tok); }
+        cfgSet(CFG_ID_KEY, o.id);
+        cfgSet(CFG_AT_KEY, o.at || new Date().toISOString());
+        cfgPinSet(pin);
+        return { ok: true, n: n, id: o.id };
+      } catch (e) {}
     }
-    var d = cfgDialog('⬇ 更新配置（从云端恢复）');
-    var pin = cfgField(d.body, 'PIN', { type: 'password' });
+    return { ok: false, msg: 'PIN 不正确，或云端没有对应的配置' };
+  }
+
+  function cfgPullUi(pin) {
+    var d = cfgDialog('⬇ 从云端恢复配置');
+    var tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11.5px;color:#8a8a99';
+    tip.textContent = '使用本机保存的恢复 PIN 自动恢复，不需要手动输入。';
+    d.body.append(tip);
+    d.stat.textContent = '准备中…';
+    cfgPull(pin, function (s) { d.stat.textContent = s; }).then(function (r) {
+      if (!r.ok) {
+        d.body.innerHTML = '';
+        var err = document.createElement('div');
+        err.style.cssText = 'font-size:12px;color:#ff9b9b';
+        err.textContent = r.msg || '恢复失败';
+        d.body.append(err);
+        var retry = cfgBtn('手动输入 PIN', '#3a6df0');
+        retry.onclick = function () { d.close(); pullConfigAsk(); };
+        var cls = cfgBtn('关闭');
+        cls.onclick = d.close;
+        d.body.append(retry, cls);
+        return;
+      }
+      d.body.innerHTML = '';
+      var ok = document.createElement('div');
+      ok.style.cssText = 'font-size:12px;color:#7ee2a8';
+      ok.textContent = '✅ 已恢复 ' + r.n + ' 项配置（ID ' + r.id + '）';
+      d.body.append(ok);
+      var done = cfgBtn('完成', '#3a6df0');
+      done.onclick = d.close;
+      d.body.append(done);
+      d.stat.textContent = '';
+      fhToast('⬇ 配置已恢复（' + r.n + ' 项）');
+    });
+  }
+
+  function pullConfigAsk() {
+    var d = cfgDialog('⬇ 从云端恢复配置（输入 PIN）');
+    var tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11.5px;color:#8a8a99;line-height:1.6';
+    tip.textContent = '本机没有保存的 PIN（换设备 / 清过缓存 / 重新安装）。请输入上次上传完成后显示的恢复 PIN。';
+    d.body.append(tip);
+    var pin = cfgField(d.body, '恢复 PIN（形如 FH7k2m-9xq4-p3wd）', { type: 'password' });
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:6px;margin-top:4px';
     var okBtn = cfgBtn('恢复', '#3a6df0');
@@ -525,36 +661,25 @@
     d.body.append(row);
     cancel.onclick = d.close;
     forgot.onclick = function () { d.close(); resetPinDialog(); };
-
-    okBtn.onclick = async function () {
+    okBtn.onclick = function () {
       var p = pin.value.trim();
-      if (!p) { d.stat.textContent = '请输入 PIN'; return; }
-      okBtn.disabled = true;
-      d.stat.textContent = '读取云端配置列表…';
-      var files = await cfgList();
-      if (!files.length) { okBtn.disabled = false; d.stat.textContent = '云端暂无配置'; return; }
-      for (var i = 0; i < files.length; i++) {
-        d.stat.textContent = '尝试 ' + (i + 1) + '/' + files.length + '：' + files[i];
-        var o = await cfgGet(files[i]);
-        if (!o || !o.kdf || !o.wrapPin || !o.box) continue;
-        try {
-          var k = await cfgKdf('pin|' + o.id + '|' + p, o.kdf.salt);
-          var raw = await cfgDec(k, o.wrapPin);
-          var dk = await cfgImport(raw);
-          var bx = await cfgDec(dk, o.box);
-          var n = cfgApply(bx.keys);
-          if (bx.tok) { cfgSet('fh:ai:gitToken', bx.tok); acctSetField('gitToken', bx.tok); }
-          cfgSet(CFG_ID_KEY, o.id);
-          cfgSet(CFG_AT_KEY, o.at || new Date().toISOString());
-          d.stat.textContent = '✅ 已恢复 ' + n + ' 项配置（ID ' + o.id + '）';
-          fhToast('⬇ 配置已恢复（' + n + ' 项）');
-          setTimeout(d.close, 1000);
-          return;
-        } catch (e) {}
-      }
-      okBtn.disabled = false;
-      d.stat.textContent = 'PIN 不正确，或云端没有对应的配置';
+      if (!cfgPinOk(p)) { d.stat.textContent = 'PIN 需 6-30 位且不含空格'; return; }
+      d.close();
+      cfgPullUi(p);
     };
+    setTimeout(function () { try { pin.focus(); } catch (e) {} }, 60);
+  }
+
+  function pullConfig() {
+    if (!cfgReady()) { alert('当前环境不支持加密（请用 https 或 Chrome 打开本地文件）'); return; }
+    if (!acctCur()) {
+      fhToast('请先登录账号（用户名 + PIN）');
+      acctOpen(pullConfig);
+      return;
+    }
+    var pin = cfgPinGet();
+    if (pin) { cfgPullUi(pin); return; }
+    pullConfigAsk();
   }
 
   function resetPinDialog() {
@@ -611,7 +736,8 @@
         var r = await cfgPut(files[i], npayload, writeTok);
         if (!r.ok) { okBtn.disabled = false; d.stat.textContent = '重置失败（' + (r.status || '网络') + '）：' + (r.text || '').slice(0, 120); return; }
         if (ak) cfgSet(CFG_ADM_KEY, ak);
-        d.stat.textContent = '✅ PIN 已重置（ID ' + o.id + '），现在可用新 PIN 恢复';
+        cfgPinSet(np);
+        d.stat.textContent = '✅ PIN 已重置（ID ' + o.id + '），已保存到本机，直接用「⬇ 更新配置」即可恢复';
         fhToast('🔑 PIN 已重置');
         setTimeout(d.close, 1200);
         return;
@@ -636,7 +762,9 @@
         'background:linear-gradient(180deg,#2b2b36,#1d1d26);color:#dcdce6;border:1px solid #3d3d4a;' +
         'padding:10px 14px;border-radius:12px;font:12.5px/1.4 -apple-system,"PingFang SC",sans-serif;' +
         'cursor:pointer;box-shadow:0 12px 36px rgba(0,0,0,.5)';
-      t.textContent = '☁ 云端有 ' + files.length + ' 份配置，点此输入 PIN 恢复';
+      t.textContent = cfgPinGet()
+        ? ('☁ 云端有 ' + files.length + ' 份配置，点此一键恢复（PIN 已存本机）')
+        : ('☁ 云端有 ' + files.length + ' 份配置，点此输入 PIN 恢复');
       t.onclick = function () { t.remove(); pullConfig(); };
       document.body.append(t);
       setTimeout(function () { if (t.parentNode) t.remove(); }, 20000);
@@ -791,8 +919,21 @@
       line('当前账号：' + cur.user);
       line('AI Key：' + (cur.key ? '已保存（' + acctMask(cur.key) + '）' : '未保存'));
       line('GitLab Token：' + (cur.gitToken ? '已保存' : '未保存（上传 / 聊天室不可用）'));
+      var sp = cfgPinGet();
+      line('配置恢复 PIN：' + (sp ? sp + '（已存本机，换设备时用）' : '未生成（首次上传配置时自动生成）'));
       line('登录状态保存在本机，刷新或重开都不用再输；直到这里点“退出登录”。');
       d.body.append(info);
+      if (sp) {
+        var cpRow = document.createElement('div');
+        cpRow.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+        var cpPin = cfgBtn('复制恢复 PIN');
+        cpPin.onclick = function () {
+          if (cfgCopy(sp)) fhToast('📋 PIN 已复制');
+          else fhToast('复制失败，请手动选中上面的 PIN');
+        };
+        cpRow.append(cpPin);
+        d.body.append(cpRow);
+      }
       var row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:6px;margin-top:6px';
       var out = cfgBtn('退出登录', '#7a2b2b');
@@ -854,6 +995,14 @@
     token: function () { var r = acctCur(); return r ? String(r.gitToken || '') : ''; }
   };
 
+  // v3.5：聊天室入口移到主界面 chat 分组（AI 窗口顶部不再放聊天室按钮）
+  // AI 已开着就直接打开聊天室；没开则加载 ai.js 并通过 flag 让它启动后自动打开。
+  function openChatRoom(btn) {
+    if (window.__fhAiRoom) { try { window.__fhAiRoom(); return; } catch (e) {} }
+    try { localStorage.setItem('fh:ai:roomOpen', '1'); } catch (e) {}
+    loadMod('mods/ai.js', btn);
+  }
+
   var GROUPS = {
     '学习': [
       ['✏️ 改名', 'mods/rename.js'],
@@ -882,7 +1031,8 @@
       ['💣 清空', 'mods/reset.js']
     ],
     'chat': [
-      ['🤖 AI 网页 · v3.4', 'mods/ai.js']
+      ['💬 聊天室（共享）', openChatRoom],
+      ['🤖 AI 网页 · v3.5', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

@@ -271,15 +271,44 @@
       '#__ai .ai-shot{width:38px;height:38px;border:1px solid var(--line);border-radius:10px;',
       'background:var(--soft);color:var(--muted);font-size:17px;flex-shrink:0}',
       '#__ai .ai-shot:active{background:var(--line);color:var(--fg)}',
-      '#__ai .ai-attach{display:none;align-items:center;gap:8px;margin-bottom:7px;padding:6px;',
+      // v3.5：多图附件（横向缩略图条）+ 图片缩放查看
+      '#__ai .ai-attach{display:none;flex-direction:column;gap:6px;margin-bottom:7px;padding:6px;',
       'border:1px solid var(--line);border-radius:10px;background:var(--soft);min-width:0}',
       '#__ai .ai-attach.on{display:flex}',
-      '#__ai .ai-attach img{width:46px;height:46px;object-fit:cover;border-radius:7px;flex-shrink:0;background:var(--bg)}',
-      '#__ai .ai-attach-info{flex:1;min-width:0}',
-      '#__ai .ai-attach-name{font-size:11px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '#__ai .ai-attach-state{font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}',
-      '#__ai .ai-attach .ai-mini{flex-shrink:0}',
-      '#__ai .ai-bubble img{display:block;max-width:100%;max-height:280px;border-radius:8px;margin-top:6px}',
+      '#__ai .ai-thumbs{display:flex;gap:6px;overflow-x:auto;padding:1px 1px 3px;overscroll-behavior-x:contain}',
+      '#__ai .ai-thumb{position:relative;flex:0 0 58px;width:58px;height:58px;border-radius:8px;overflow:hidden;',
+      'background:var(--bg);cursor:zoom-in}',
+      '#__ai .ai-thumb img{width:100%;height:100%;object-fit:cover;display:block}',
+      '#__ai .ai-thumb .ph{width:100%;height:100%;display:grid;place-items:center;color:var(--dim);font-size:16px}',
+      '#__ai .ai-thumb .s{position:absolute;left:0;right:0;bottom:0;height:14px;line-height:14px;text-align:center;',
+      'font-size:9px;color:#fff;background:rgba(0,0,0,.6);white-space:nowrap;overflow:hidden}',
+      '#__ai .ai-thumb .s.ok{background:rgba(38,150,88,.86)}',
+      '#__ai .ai-thumb .s.bad{background:rgba(190,58,58,.9);cursor:pointer}',
+      '#__ai .ai-thumb .x{position:absolute;right:0;top:0;width:16px;height:16px;border:0;border-radius:0 0 0 8px;',
+      'background:rgba(0,0,0,.62);color:#fff;font:10px/16px inherit;padding:0;cursor:pointer}',
+      '#__ai .ai-attach-bar{display:flex;align-items:center;gap:6px;min-width:0}',
+      '#__ai .ai-attach-tit{flex:1;min-width:0;font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '#__ai .ai-attach-bar .ai-mini{flex-shrink:0}',
+      '#__ai .ai-bubble img{display:block;max-width:100%;max-height:280px;border-radius:8px;margin-top:6px;cursor:zoom-in}',
+      '#__ai .ai-bubble .ai-bimgs{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}',
+      '#__ai .ai-bubble .ai-bimgs img{margin-top:0;max-height:150px;max-width:46%}',
+      '#__ai .ai-bubble .ai-bimgs:not(.multi) img{max-width:100%;max-height:260px}',
+      // 缩放层（fixed 到视口，滚轮/双指缩放、拖动平移；挂在 body 上，不能用 #__ai 前缀）
+      '.ai-zoom{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.95);',
+      'display:flex;flex-direction:column;touch-action:none;overscroll-behavior:contain}',
+      '.ai-zoom .zbar{display:flex;align-items:center;gap:5px;padding:8px 10px;flex-shrink:0}',
+      '.ai-zoom .ztit{flex:1;min-width:0;font-size:12px;color:rgba(255,255,255,.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.ai-zoom .zpct{flex-shrink:0;font:12px/1 ui-monospace,monospace;color:#9dbcff;min-width:42px;text-align:center}',
+      '.ai-zoom .zbar button{flex-shrink:0;height:30px;min-width:32px;padding:0 8px;border:1px solid rgba(255,255,255,.22);',
+      'border-radius:8px;background:rgba(255,255,255,.1);color:#fff;font:12px/1 inherit;cursor:pointer}',
+      '.ai-zoom .zbar button:active{background:rgba(255,255,255,.22)}',
+      '.ai-zoom .zstage{flex:1;min-height:0;position:relative;overflow:hidden;display:flex;',
+      'align-items:center;justify-content:center;cursor:grab}',
+      '.ai-zoom .zstage.drag{cursor:grabbing}',
+      '.ai-zoom .zstage img{max-width:100%;max-height:100%;transform-origin:center center;',
+      'will-change:transform;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none}',
+      '.ai-zoom .zhint{position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:10px;',
+      'color:rgba(255,255,255,.45);pointer-events:none}',
       '#__ai .ai-ta{flex:1;min-width:0;min-height:38px;max-height:120px;padding:9px 10px;resize:none;',
       'border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);',
       'font:13px/1.5 inherit;outline:none}',
@@ -325,7 +354,7 @@
       '#__ai .ai-line .m{padding:7px 10px;border-radius:11px;background:var(--bot);color:var(--fg);',
       'font-size:12px;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}',
       '#__ai .ai-line.me .m{background:linear-gradient(180deg,var(--user),var(--accent2));color:#fff}',
-      '#__ai .ai-line .m img{display:block;max-width:100%;max-height:220px;border-radius:7px;margin-top:4px}',
+      '#__ai .ai-line .m img{display:block;max-width:100%;max-height:220px;border-radius:7px;margin-top:4px;cursor:zoom-in}',
       '#__ai .ai-line .t{font-size:9px;color:var(--dim)}',
       '#__ai .ai-roomrow{display:flex;align-items:center;gap:6px;padding:7px 9px;border-top:1px solid var(--line);flex-shrink:0}',
       '#__ai .ai-roomrow input{flex:1;min-width:0;height:34px;padding:0 9px;border:1px solid var(--line);',
@@ -378,7 +407,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.4';
+  ver.textContent = 'v3.5';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -387,14 +416,13 @@
   var newBtn = button('＋', 'ai-ico', '新建对话');
   var sessBtn = button('🗂', 'ai-ico', '对话列表');
   var galBtn = button('🖼', 'ai-ico', '相册');
-  var roomBtn = button('💬', 'ai-ico', '聊天室（共享）');
   var probeBtn = button('📡', 'ai-ico', '探测 / 缓存');
   var acctBtn = button('👤', 'ai-ico', '账号（用户名 + PIN）');
   var cfgBtn = button('🔑', 'ai-ico', 'API Key / 设置');
   var fullBtn = button('⛶', 'ai-ico', '全屏');
   var themeBtn = button('🌓', 'ai-ico ai-themebtn', '主题');
   var closeBtn = button('✕', 'ai-ico ai-close', '关闭');
-  head.append(logo, title, badge, spacer, dot, newBtn, sessBtn, galBtn, roomBtn, probeBtn, acctBtn, cfgBtn, fullBtn, themeBtn, closeBtn);
+  head.append(logo, title, badge, spacer, dot, newBtn, sessBtn, galBtn, probeBtn, acctBtn, cfgBtn, fullBtn, themeBtn, closeBtn);
 
   // 设置抽屉
   var cfgBox = div('ai-cfg');
@@ -613,12 +641,12 @@
   autoIn.onchange = function () {
     cfg.autoUpload = !!autoIn.checked;
     save(K_AUTO, cfg.autoUpload ? '1' : '0');
-    if (cfg.autoUpload && pendingImage && cfg.gitToken && pendingImage.dataUrl &&
-      (pendingImage.state === 'off' || pendingImage.state === 'no-token')) {
-      uploadImage(pendingImage);
-    } else {
-      renderAttach();
+    if (cfg.autoUpload && cfg.gitToken) {
+      pendingImages.forEach(function (it) {
+        if (it.dataUrl && (it.state === 'off' || it.state === 'no-token')) uploadImage(it);
+      });
     }
+    renderAttach();
   };
 
   var themeRow = div('ai-row');
@@ -693,15 +721,12 @@
   // 输入区
   var foot = div('ai-foot');
 
+  // v3.5：多图（最多 9 张）——缩略图条 + 每张单独上传状态
+  var MAX_IMAGES = 9;
   var attach = div('ai-attach');
-  var attachImg = document.createElement('img');
-  var attachInfo = div('ai-attach-info');
-  var attachName = div('ai-attach-name', '');
-  var attachState = div('ai-attach-state', '');
-  attachInfo.append(attachName, attachState);
-  var attachRetry = button('重试', 'ai-mini', '重新上传 GitLab');
-  attachRetry.style.display = 'none';
-  var attachRm = button('移除', 'ai-mini', '移除这张图片');
+  var thumbs = div('ai-thumbs');
+  var attachBar = div('ai-attach-bar');
+  var attachTit = div('ai-attach-tit', '');
   // v3.3：配置了 GitLab Token 才显示「上传至 GitLab 仓库」，勾选状态持久保存
   var gitUpWrap = document.createElement('label');
   gitUpWrap.style.cssText = 'display:none;align-items:center;gap:4px;font-size:10.5px;color:var(--dim);' +
@@ -710,24 +735,28 @@
   gitUp.type = 'checkbox';
   gitUp.style.cssText = 'margin:0;width:12px;height:12px;accent-color:#5b8dfa';
   var gitUpTxt = document.createElement('span');
-  gitUpTxt.textContent = '上传至 GitLab 仓库';
+  gitUpTxt.textContent = '传 GitLab';
   gitUpWrap.append(gitUp, gitUpTxt);
   gitUp.onchange = function () {
     cfg.autoUpload = !!gitUp.checked;
     save(K_AUTO, cfg.autoUpload ? '1' : '0');
-    if (!pendingImage) return;
-    if (cfg.autoUpload && cfg.gitToken && pendingImage.state !== 'uploaded' &&
-      pendingImage.state !== 'uploading') {
-      uploadImage(pendingImage);
+    if (!pendingImages || !pendingImages.length) return;
+    if (cfg.autoUpload && cfg.gitToken) {
+      pendingImages.forEach(function (it) {
+        if (it.dataUrl && it.state !== 'uploaded' && it.state !== 'uploading') uploadImage(it);
+      });
     } else if (!cfg.autoUpload) {
-      if (uploadXhr) { try { uploadXhr.abort(); } catch (e) {} uploadXhr = null; }
-      if (pendingImage.state !== 'uploaded') {
-        pendingImage.state = 'off';
-        renderAttach();
-      }
+      pendingImages.forEach(function (it) {
+        if (it.xhr) { try { it.xhr.abort(); } catch (e) {} it.xhr = null; }
+        if (it.state !== 'uploaded') it.state = 'off';
+      });
+      renderAttach();
     }
   };
-  attach.append(attachImg, attachInfo, gitUpWrap, attachRetry, attachRm);
+  var attachUp = button('上传', 'ai-mini', '把还没上传的图片传到 GitLab media/');
+  var attachRm = button('清空', 'ai-mini', '移除全部图片');
+  attachBar.append(attachTit, gitUpWrap, attachUp, attachRm);
+  attach.append(thumbs, attachBar);
   renderAttach();
 
   var inputRow = div('ai-inputrow');
@@ -1101,15 +1130,120 @@
     });
   }
   var viewer = null;
+  var zoomOv = null, zoomCloseFn = null;
+  // ── v3.5 图片缩放：滚轮 / 双指缩放，拖动平移，双击还原 ──
+  function openZoom(src, name) {
+    if (!src) return;
+    if (zoomOv) { try { zoomOv.remove(); } catch (e) {} zoomOv = null; }
+    var ov = div('ai-zoom');
+    var bar = div('zbar');
+    var tit = div('ztit', name || '图片');
+    var pct = div('zpct', '100%');
+    var out = button('－', '', '缩小');
+    var inn = button('＋', '', '放大');
+    var one = button('1:1', '', '实际大小');
+    var fit = button('适合', '', '适合窗口');
+    var cl = button('✕', '', '关闭（Esc）');
+    bar.append(tit, pct, out, one, fit, inn, cl);
+    var stage = div('zstage');
+    var im = document.createElement('img');
+    im.src = src;
+    im.alt = name || '图片';
+    stage.append(im);
+    stage.append(div('zhint', '滚轮 / 双指缩放 · 拖动平移 · 双击还原'));
+    ov.append(bar, stage);
+    document.body.append(ov);
+    zoomOv = ov;
+
+    var s = 1, x = 0, y = 0;
+    function clampS(v) { return Math.min(8, Math.max(0.4, v)); }
+    function paint() {
+      im.style.transform = 'translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) scale(' + s.toFixed(3) + ')';
+      pct.textContent = Math.round(s * 100) + '%';
+    }
+    function zoomAt(ns, cx, cy) {
+      ns = clampS(ns);
+      if (!(ns > 0)) return;
+      var r = stage.getBoundingClientRect();
+      var px = (typeof cx === 'number') ? cx - r.left - r.width / 2 : 0;
+      var py = (typeof cy === 'number') ? cy - r.top - r.height / 2 : 0;
+      x = px - (px - x) * (ns / s);
+      y = py - (py - y) * (ns / s);
+      s = ns;
+      paint();
+    }
+    function reset() { s = 1; x = 0; y = 0; paint(); }
+    function closeZoom() {
+      try { ov.remove(); } catch (e) {}
+      if (zoomOv === ov) zoomOv = null;
+      if (zoomCloseFn === closeZoom) zoomCloseFn = null;
+    }
+    zoomCloseFn = closeZoom;
+    out.onclick = function () { zoomAt(s / 1.25); };
+    inn.onclick = function () { zoomAt(s * 1.25); };
+    one.onclick = reset;
+    fit.onclick = reset;
+    cl.onclick = closeZoom;
+    ov.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      zoomAt(s * (e.deltaY < 0 ? 1.16 : 1 / 1.16), e.clientX, e.clientY);
+    }, { passive: false });
+
+    var pts = {}, lastDist = 0, lastMid = null;
+    function count() { return Object.keys(pts).length; }
+    stage.addEventListener('pointerdown', function (e) {
+      try { stage.setPointerCapture(e.pointerId); } catch (err) {}
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (count() === 2) {
+        var k = Object.keys(pts);
+        lastDist = Math.hypot(pts[k[0]].x - pts[k[1]].x, pts[k[0]].y - pts[k[1]].y) || 0;
+        lastMid = { x: (pts[k[0]].x + pts[k[1]].x) / 2, y: (pts[k[0]].y + pts[k[1]].y) / 2 };
+      }
+      stage.classList.add('drag');
+    });
+    stage.addEventListener('pointermove', function (e) {
+      if (!pts[e.pointerId]) return;
+      var prev = pts[e.pointerId];
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (count() >= 2) {
+        var k = Object.keys(pts);
+        var d = Math.hypot(pts[k[0]].x - pts[k[1]].x, pts[k[0]].y - pts[k[1]].y) || 0;
+        var mid = { x: (pts[k[0]].x + pts[k[1]].x) / 2, y: (pts[k[0]].y + pts[k[1]].y) / 2 };
+        if (lastDist > 0 && d > 0) zoomAt(s * (d / lastDist), mid.x, mid.y);
+        if (lastMid) { x += mid.x - lastMid.x; y += mid.y - lastMid.y; paint(); }
+        lastDist = d;
+        lastMid = mid;
+        return;
+      }
+      x += e.clientX - prev.x;
+      y += e.clientY - prev.y;
+      paint();
+    });
+    function up(e) {
+      delete pts[e.pointerId];
+      if (count() < 2) { lastDist = 0; lastMid = null; }
+      if (!count()) stage.classList.remove('drag');
+    }
+    stage.addEventListener('pointerup', up);
+    stage.addEventListener('pointercancel', up);
+    stage.addEventListener('pointerleave', function (e) {
+      if (e.pointerType === 'mouse' && e.buttons === 0) up(e);
+    });
+    stage.addEventListener('dblclick', function (e) {
+      if (s > 1.05) reset();
+      else zoomAt(2.5, e.clientX, e.clientY);
+    });
+  }
   function openViewer(rec) {
     if (!viewer) {
       viewer = div('ai-view');
       var v = div('v');
       var bar = div('b');
       var dl = button('下载', '', '保存到本机');
+      var zo = button('缩放', '', '放大 / 缩小（滚轮、双指）');
       var del = button('删除', '', '从相册删除');
       var cl = button('关闭', '', '');
-      bar.append(dl, del, cl);
+      bar.append(dl, zo, del, cl);
       viewer.append(v, bar);
       card.append(viewer);
       viewer._v = v;
@@ -1137,6 +1271,11 @@
     }
     viewer.classList.add('on');
     var bar = viewer.querySelector('.b');
+    bar.children[1].style.display = rec.kind === 'video' ? 'none' : '';
+    bar.children[1].onclick = function () {
+      if (rec.kind === 'video') return;
+      openZoom(url, rec.name || '照片');
+    };
     bar.children[0].onclick = function () {
       try {
         var a = document.createElement('a');
@@ -1147,7 +1286,7 @@
         a.remove();
       } catch (e) {}
     };
-    bar.children[1].onclick = function () {
+    bar.children[2].onclick = function () {
       if (!confirm('从相册删除这张？')) return;
       dbDel(rec.id).then(function () {
         viewer.classList.remove('on');
@@ -1204,6 +1343,8 @@
     if (!roomBody) return;
     roomBody.innerHTML = '';
     var box = div('ai-room');
+    if (!acctRec()) box.append(div('ai-hint', '未登录：可以查看，发言需先在 👤 登录（用户名 + PIN）。'));
+    else if (!cfg.gitToken) box.append(div('ai-hint', '未配置上传 Token：可以查看，发言需先在 🔑 保存 GitLab Token。'));
     if (!roomMsgs.length) {
       box.append(div('ai-hint', '聊天室还是空的。发一条，所有人（所有用户）都能看到。'));
     }
@@ -1216,6 +1357,7 @@
         var im = document.createElement('img');
         im.alt = '图片';
         im.loading = 'lazy';
+        im.onclick = function () { if (im.src) openZoom(im.src, '聊天室图片'); };
         roomImage(m.image, im);
         b.append(im);
       }
@@ -1454,16 +1596,18 @@
 
   var busy = false;
   var xhr = null;
-  var pendingImage = null;
-  var uploadXhr = null;
+  var pendingImages = [];       // v3.5：多图附件（每张独立状态 / 上传）
   var photoBusy = false;
+  var photoQueue = [];
+  var imgSeq = 0;
   var closed = false;
   var camStop = null;
 
   var photoIn = document.createElement('input');
   photoIn.type = 'file';
   photoIn.accept = 'image/*';
-  try { photoIn.setAttribute('capture', 'environment'); } catch (e) {}
+  photoIn.multiple = true;
+  try { photoIn.removeAttribute('capture'); } catch (e) {}
   photoIn.style.display = 'none';
 
   function isLight() {
@@ -1497,7 +1641,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.4 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.5 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -1788,45 +1932,80 @@
   }
 
   function renderAttach() {
+    var list = pendingImages || [];
     gitUpWrap.style.display = cfg.gitToken ? 'flex' : 'none';
     gitUp.checked = !!cfg.autoUpload;
-    if (!pendingImage) {
+    thumbs.innerHTML = '';
+    if (!list.length) {
       attach.classList.remove('on');
-      attachImg.removeAttribute('src');
-      attachName.textContent = '';
-      attachState.textContent = '';
-      attachRetry.style.display = 'none';
+      attachTit.textContent = '';
+      attachUp.style.display = 'none';
       return;
     }
     attach.classList.add('on');
-    attachName.textContent = pendingImage.name || '照片';
-    attachState.textContent = attachStateText(pendingImage);
-    if (pendingImage.dataUrl) attachImg.src = pendingImage.dataUrl;
-    else attachImg.removeAttribute('src');
-    var canUpload = !!cfg.gitToken && pendingImage.state !== 'uploading' && pendingImage.state !== 'uploaded' &&
-      pendingImage.state !== 'error';
-    attachRetry.style.display = canUpload ? '' : 'none';
-    attachRetry.textContent = pendingImage.state === 'failed' ? '重试' : '上传';
+    var done = 0, running = 0, bad = 0;
+    list.forEach(function (item) {
+      var cell = div('ai-thumb');
+      if (item.dataUrl) {
+        var im = document.createElement('img');
+        im.src = item.dataUrl;
+        im.alt = item.name || '照片';
+        im.onclick = function () { openZoom(item.dataUrl, item.name); };
+        cell.append(im);
+      } else {
+        cell.append(div('ph', '⏳'));
+      }
+      var st = div('s'), txt;
+      if (item.state === 'compress') { txt = '压缩中'; running++; }
+      else if (item.state === 'uploading') { txt = '上传中'; running++; }
+      else if (item.state === 'uploaded') { txt = '✓ 已传'; st.classList.add('ok'); done++; }
+      else if (item.state === 'failed' || item.state === 'error') { txt = '! 重试'; st.classList.add('bad'); bad++; }
+      else if (item.state === 'no-token') txt = '仅发送';
+      else if (item.state === 'off') txt = '未上传';
+      else txt = '就绪';
+      st.textContent = txt;
+      st.title = attachStateText(item);
+      if ((item.state === 'failed' || item.state === 'error') && item.dataUrl) {
+        st.onclick = function (e) { e.stopPropagation(); uploadImage(item); };
+      }
+      var x = button('✕', 'x', '移除这张');
+      x.onclick = function (e) { e.stopPropagation(); removeImage(item); };
+      cell.append(st, x);
+      thumbs.append(cell);
+    });
+    attachTit.textContent = '已选 ' + list.length + '/' + MAX_IMAGES + ' 张' +
+      (done ? ' · 已传 ' + done : '') + (running ? ' · 处理中 ' + running : '') +
+      (bad ? ' · 待重试 ' + bad : '');
+    attachUp.style.display = (cfg.gitToken && list.some(function (i) {
+      return i.dataUrl && i.state !== 'uploaded' && i.state !== 'uploading';
+    })) ? '' : 'none';
+  }
+
+  function removeImage(item) {
+    if (item.xhr) { try { item.xhr.abort(); } catch (e) {} item.xhr = null; }
+    var i = pendingImages.indexOf(item);
+    if (i >= 0) pendingImages.splice(i, 1);
+    renderAttach();
   }
 
   function clearPending(abortUpload) {
-    if (abortUpload && uploadXhr) {
-      try { uploadXhr.abort(); } catch (e) {}
-      uploadXhr = null;
+    if (abortUpload) {
+      pendingImages.forEach(function (it) {
+        if (it.xhr) { try { it.xhr.abort(); } catch (e) {} it.xhr = null; }
+      });
+      photoQueue = [];
     }
-    pendingImage = null;
+    pendingImages = [];
     renderAttach();
   }
 
   function uploadImage(item) {
     if (closed) return;
-    if (!item || !cfg.gitToken) {
-      if (item) { item.state = 'no-token'; renderAttach(); }
-      return;
-    }
-    if (uploadXhr) {
-      try { uploadXhr.abort(); } catch (e) {}
-      uploadXhr = null;
+    if (!item || !item.dataUrl) return;
+    if (!cfg.gitToken) { item.state = 'no-token'; renderAttach(); return; }
+    if (item.xhr) {
+      try { item.xhr.abort(); } catch (e) {}
+      item.xhr = null;
     }
     item.state = 'uploading';
     item.error = '';
@@ -1842,7 +2021,7 @@
     }
 
     var x = new XMLHttpRequest();
-    uploadXhr = x;
+    item.xhr = x;
     var url = 'https://gitlab.com/api/v4/projects/' + encodeURIComponent(GIT_PROJ) +
       '/repository/files/' + encodeURIComponent(item.remotePath);
     try {
@@ -1851,7 +2030,7 @@
       x.setRequestHeader('PRIVATE-TOKEN', cfg.gitToken.trim());
       x.timeout = 60000;
     } catch (e) {
-      uploadXhr = null;
+      item.xhr = null;
       item.state = 'failed';
       item.error = e && e.message ? e.message : String(e);
       renderAttach();
@@ -1859,8 +2038,8 @@
     }
 
     x.onload = function () {
-      if (uploadXhr !== x) return;
-      uploadXhr = null;
+      if (item.xhr !== x) return;
+      item.xhr = null;
       if (x.status >= 200 && x.status < 300) {
         item.state = 'uploaded';
       } else {
@@ -1874,6 +2053,7 @@
         // 同一秒/同名冲突：换一个名字再试一次
         if (x.status === 400 && /already exists/i.test(x.responseText || '') && !item.retried) {
           item.retried = true;
+          item.remotePath = 'media/' + stamp() + '-' + rand4() + '.jpg';
           uploadImage(item);
           return;
         }
@@ -1881,22 +2061,22 @@
       renderAttach();
     };
     x.onerror = function () {
-      if (uploadXhr !== x) return;
-      uploadXhr = null;
+      if (item.xhr !== x) return;
+      item.xhr = null;
       item.state = 'failed';
       item.error = '网络/CORS 错误';
       renderAttach();
     };
     x.ontimeout = function () {
-      if (uploadXhr !== x) return;
-      uploadXhr = null;
+      if (item.xhr !== x) return;
+      item.xhr = null;
       item.state = 'failed';
       item.error = '上传超时';
       renderAttach();
     };
     x.onabort = function () {
-      if (uploadXhr !== x) return;
-      uploadXhr = null;
+      if (item.xhr !== x) return;
+      item.xhr = null;
       if (item.state === 'uploading') {
         item.state = 'failed';
         item.error = '已取消';
@@ -1912,60 +2092,85 @@
         commit_message: 'upload photo ' + item.remotePath.replace(/^media\//, '')
       }));
     } catch (e) {
-      uploadXhr = null;
+      item.xhr = null;
       item.state = 'failed';
       item.error = e && e.message ? e.message : String(e);
       renderAttach();
     }
   }
 
-  function handlePhoto(file) {
-    if (!file || photoBusy || closed) return;
-    if (!/^image\//i.test(file.type || '')) {
-      cfgMsg.textContent = '请选择图片文件';
-      return;
-    }
-    if (file.size > 30 * 1024 * 1024) {
-      cfgMsg.textContent = '图片太大（超过 30MB）';
-      return;
-    }
-    photoBusy = true;
-    photoBtn.disabled = true;
-    clearPending(true);
-    var tmp = {
-      name: 'photo-' + stamp() + '.jpg',
+  function queuePhoto(file) {
+    var item = {
+      id: ++imgSeq,
+      name: 'photo-' + stamp() + '-' + imgSeq + '.jpg',
       dataUrl: '',
       state: 'compress',
       error: '',
-      remotePath: ''
+      remotePath: '',
+      file: file,
+      xhr: null
     };
-    pendingImage = tmp;
+    pendingImages.push(item);
+    photoQueue.push(item);
     renderAttach();
-    compressImage(file).then(blobToDataURL).then(function (dataUrl) {
-      if (closed) return;
+    pumpPhotos();
+  }
+
+  function handlePhotos(files) {
+    if (!files || !files.length || closed) return;
+    var arr = Array.prototype.slice.call(files);
+    var room = MAX_IMAGES - pendingImages.length;
+    if (room <= 0) { cfgMsg.textContent = '最多只能附加 ' + MAX_IMAGES + ' 张图片'; return; }
+    var cut = 0;
+    if (arr.length > room) { cut = arr.length - room; arr = arr.slice(0, room); }
+    var skipped = 0;
+    arr.forEach(function (f) {
+      if (!f || !/^image\//i.test(f.type || '')) { skipped++; return; }
+      if (f.size > 30 * 1024 * 1024) { skipped++; return; }
+      queuePhoto(f);
+    });
+    if (skipped) cfgMsg.textContent = '已跳过 ' + skipped + ' 个非图片或超过 30MB 的文件';
+    else if (cut) cfgMsg.textContent = '最多 ' + MAX_IMAGES + ' 张，已添加前 ' + room + ' 张';
+  }
+
+  function handlePhoto(file) { handlePhotos([file]); }
+
+  // 逐张压缩（避免 9 张大图同时解码把页面卡死）
+  function pumpPhotos() {
+    if (photoBusy || !photoQueue.length || closed) return;
+    var item = photoQueue.shift();
+    photoBusy = true;
+    photoBtn.disabled = true;
+    compressImage(item.file).then(blobToDataURL).then(function (dataUrl) {
+      if (closed) return null;
       if (!dataUrl || dataUrl.indexOf('data:image/') !== 0) throw new Error('图片格式异常');
-      tmp.dataUrl = dataUrl;
-      // 相册存原图（IndexedDB，不压缩、不上传）
-      saveMedia(file, tmp.name, {}).then(function (id) {
-        tmp.mediaId = id;
+      item.dataUrl = dataUrl;
+      var file = item.file;
+      item.file = null;
+      // 相册存原图（IndexedDB，不压缩、不上传）；存不进也不影响发送
+      return saveMedia(file, item.name, {}).then(function (id) {
+        item.mediaId = id;
         if (galOv && galOv.el.classList.contains('on')) renderAlbum();
-      });
-      if (cfg.autoUpload && cfg.gitToken) uploadImage(tmp);
+      }).catch(function () {});
+    }).then(function () {
+      if (closed) return;
+      if (cfg.autoUpload && cfg.gitToken) uploadImage(item);
       else {
-        tmp.state = cfg.gitToken ? 'off' : 'no-token';
+        item.state = cfg.gitToken ? 'off' : 'no-token';
         renderAttach();
       }
     }).catch(function (e) {
       if (closed) return;
-      if (pendingImage === tmp) {
-        tmp.state = 'error';
-        tmp.error = e && e.message ? e.message : String(e);
-      }
+      item.state = 'error';
+      item.error = e && e.message ? e.message : String(e);
+      item.file = null;
       renderAttach();
-      cfgMsg.textContent = '照片处理失败：' + (e && e.message ? e.message : e);
+      cfgMsg.textContent = '照片处理失败：' + item.error;
     }).then(function () {
       photoBusy = false;
       photoBtn.disabled = false;
+      renderAttach();
+      pumpPhotos();
     });
   }
 
@@ -2049,12 +2254,18 @@
     startCam();
   }
 
-  function addImageToBubble(bubble, dataUrl) {
-    if (!dataUrl) return;
-    var im = document.createElement('img');
-    im.src = dataUrl;
-    im.alt = '照片';
-    bubble.append(im);
+  function addImageToBubble(bubble, list) {
+    var urls = (list || []).filter(function (u) { return !!u; });
+    if (!urls.length) return;
+    var box = div('ai-bimgs' + (urls.length > 1 ? ' multi' : ''));
+    urls.forEach(function (u, i) {
+      var im = document.createElement('img');
+      im.src = u;
+      im.alt = '照片 ' + (i + 1);
+      im.onclick = function () { openZoom(u, '照片 ' + (i + 1)); };
+      box.append(im);
+    });
+    bubble.append(box);
   }
 
   function send() {
@@ -2067,25 +2278,25 @@
       return;
     }
     var text = ta.value.trim();
-    if (!text && !pendingImage) { ta.focus(); return; }
-    if (pendingImage && !pendingImage.dataUrl) {
+    var imgs = pendingImages.slice();
+    if (!text && !imgs.length) { ta.focus(); return; }
+    if (imgs.some(function (i) { return !i.dataUrl; })) {
       cfgMsg.textContent = '图片还在处理中，稍等一下';
       return;
     }
+    var urls = imgs.map(function (i) { return i.dataUrl; });
+    var label = urls.length > 1 ? '[' + urls.length + ' 张图片]' : '[图片]';
 
-    var img = pendingImage;
     ta.value = '';
     grow();
-    history.push({ role: 'user', content: text || '[图片]' });
+    history.push({ role: 'user', content: text || label });
     saveHistory();
     var sendSid = sid, sendOwner = ownerTag;
     setStat();
-    var userUi = addBubble('user', text || '📷 图片');
-    if (img) addImageToBubble(userUi.bubble, img.dataUrl);
-    if (pendingImage === img) {
-      pendingImage = null;
-      renderAttach();
-    }
+    var userUi = addBubble('user', text || (urls.length > 1 ? '📷 ' + urls.length + ' 张图片' : '📷 图片'));
+    if (urls.length) addImageToBubble(userUi.bubble, urls);
+    // 附件已随消息发出，清空输入区（不打断仍在后台进行的上传）
+    clearPending(false);
 
     var ui = addBubble('assistant', '');
     ui.bubble.textContent = '正在思考…';
@@ -2094,13 +2305,14 @@
     var apiMessages = history.slice(-24).map(function (m) {
       return { role: m.role, content: m.content };
     });
-    if (img) {
+    if (urls.length) {
       var lastMsg = apiMessages[apiMessages.length - 1];
       if (lastMsg && lastMsg.role === 'user') {
-        lastMsg.content = [
-          { type: 'text', text: text || '请看看这张图片。' },
-          { type: 'image_url', image_url: { url: img.dataUrl } }
-        ];
+        var parts = [{ type: 'text', text: text || '请看看这些图片。' }];
+        urls.forEach(function (u) {
+          parts.push({ type: 'image_url', image_url: { url: u } });
+        });
+        lastMsg.content = parts;
       }
     }
 
@@ -2390,7 +2602,6 @@
   newBtn.onclick = function (e) { e.stopPropagation(); newSession(); };
   sessBtn.onclick = function (e) { e.stopPropagation(); openSessions(); };
   galBtn.onclick = function (e) { e.stopPropagation(); openAlbum(); };
-  roomBtn.onclick = function (e) { e.stopPropagation(); openRoom(); };
   probeBtn.onclick = function (e) { e.stopPropagation(); openProbe(); };
   modelIn.onchange = function () {
     var m = String(modelIn.value || '').trim();
@@ -2531,14 +2742,16 @@
     openCam();
   };
   photoIn.onchange = function () {
-    var f = photoIn.files && photoIn.files[0];
-    if (f) handlePhoto(f);
+    var fs = photoIn.files;
+    if (fs && fs.length) handlePhotos(fs);
     photoIn.value = '';
   };
-  attachRm.onclick = function () { clearPending(true); };
-  attachRetry.onclick = function () {
-    if (pendingImage) uploadImage(pendingImage);
+  attachUp.onclick = function () {
+    pendingImages.forEach(function (it) {
+      if (it.dataUrl && it.state !== 'uploaded' && it.state !== 'uploading') uploadImage(it);
+    });
   };
+  attachRm.onclick = function () { clearPending(true); };
   clearBtn.onclick = function () {
     if (!history.length && !msgs.querySelector('.ai-msg')) return;
     if (!confirm('清空本机对话记录？')) return;
@@ -2560,15 +2773,21 @@
     closed = true;
     if (camStop) { try { camStop(); } catch (e) {} camStop = null; }
     try { stop(); } catch (e) {}
-    if (uploadXhr) { try { uploadXhr.abort(); } catch (e) {} uploadXhr = null; }
+    pendingImages.forEach(function (it) {
+      if (it.xhr) { try { it.xhr.abort(); } catch (e) {} it.xhr = null; }
+    });
+    photoQueue = [];
+    try { if (zoomCloseFn) zoomCloseFn(); } catch (e) {}
     try { document.removeEventListener('keydown', onKey); } catch (e) {}
     if (window.__fhAIStop === stop) window.__fhAIStop = null;
+    if (window.__fhAiRoom) window.__fhAiRoom = null;
     if (fhPanel) fhPanel.style.display = fhDisplay == null ? '' : fhDisplay;
     try { photoIn.remove(); } catch (e) {}
     root.remove();
   }
   function onKey(e) {
     if (e.key !== 'Escape') return;
+    if (zoomCloseFn) { zoomCloseFn(); return; }
     if (viewer && viewer.classList.contains('on')) { viewer.classList.remove('on'); return; }
     if (overlayStack.length) { overlayStack[overlayStack.length - 1].el.hide(); return; }
     if (cfgBox.classList.contains('on')) { openCfg(false); return; }
@@ -2582,6 +2801,7 @@
   acctBtn.title = acctRec() ? ('账号：' + acctRec().user) : '账号（用户名 + PIN）';
   document.addEventListener('keydown', onKey);
   window.__fhAIStop = stop;
+  window.__fhAiRoom = function () { try { openRoom(); } catch (e) {} };
 
   document.body.append(root);
   document.body.append(photoIn);
@@ -2591,7 +2811,16 @@
   renderHistory();
   grow();
 
-  if (!cfg.key) {
+  var wantRoom = false;
+  try {
+    wantRoom = localStorage.getItem('fh:ai:roomOpen') === '1';
+    if (wantRoom) localStorage.removeItem('fh:ai:roomOpen');
+  } catch (e) {}
+
+  if (wantRoom) {
+    // 从主面板「💬 聊天室」进入：直接开聊天室，不弹 Key / 账号设置
+    setTimeout(function () { try { openRoom(); } catch (e) {} }, 160);
+  } else if (!cfg.key) {
     openCfg(true);
     cfgMsg.textContent = acctRec()
       ? '已登录：输入 API Key 后点“保存”，之后只显示掩码，Key 会归到当前账号。'

