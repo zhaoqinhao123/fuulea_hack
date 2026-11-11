@@ -26,6 +26,7 @@
   var K_NICK = 'fh:ai:nick';
   var K_ROOM_AT = 'fh:ai:roomAt';
   var K_ROOM_MODE = 'fh:ai:roomMode';
+  var K_ROOM_RECT = 'fh:ai:roomRect';
   var GIT_HOST = 'https://gitlab.com';
   var GIT_PROJ = 'yq-group2/fuulea_ai_repository';
   var GIT_BRANCH = 'main';
@@ -349,6 +350,15 @@
       '#__ai .ai-ov{position:absolute;left:0;top:0;right:0;bottom:0;z-index:8;display:none;flex-direction:column;',
       'background:var(--bg);min-width:0;min-height:0}',
       '#__ai .ai-ov.on{display:flex}',
+      // v3.7 聊天室浮窗：脱离卡片、固定定位，可拖拽/缩放
+      '#__ai .ai-ov.ai-win{position:fixed;left:auto;top:auto;right:auto;bottom:auto;min-width:300px;min-height:240px;',
+      'border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.58);overflow:hidden}',
+      '#__ai .ai-ov.ai-win .ai-ovbar{cursor:move;touch-action:none;user-select:none;-webkit-user-select:none}',
+      '#__ai .ai-ov.ai-win .ai-ovbar .ai-ovtit{pointer-events:none}',
+      '#__ai .ai-ov.ai-win .ai-roomrow{padding-right:26px}',
+      '#__ai .ai-roomgrip{position:absolute;right:2px;bottom:2px;width:22px;height:22px;z-index:12;',
+      'cursor:se-resize;touch-action:none;border-radius:0 0 12px 0;opacity:.75;',
+      'background:linear-gradient(135deg,transparent 42%,var(--line) 42%,var(--line) 50%,transparent 50%,transparent 62%,var(--line) 62%,var(--line) 70%,transparent 70%)}',
       '#__ai .ai-ovbar{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);flex-shrink:0}',
       '#__ai .ai-ovtit{flex:1;min-width:0;font-weight:700;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '#__ai .ai-ovbody{flex:1;min-height:0;overflow:auto;padding:8px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}',
@@ -715,7 +725,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.6';
+  ver.textContent = 'v3.7';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -1764,6 +1774,115 @@
       refreshRoom(true);
     });
   }
+  // ── v3.7 聊天室浮窗：独立于卡片，可拖拽 / 缩放 / 记住位置 ──
+  var roomGrip = null, roomRect = null;
+
+  function roomWinDefault() {
+    var w = Math.max(300, Math.min(620, innerWidth - 28));
+    var h = Math.max(240, Math.min(660, innerHeight - 70));
+    return {
+      l: Math.round((innerWidth - w) / 2),
+      t: Math.round((innerHeight - h) / 2),
+      w: w, h: h
+    };
+  }
+  function roomWinClamp(r) {
+    r = r || {};
+    var maxW = Math.max(300, innerWidth - 8);
+    var maxH = Math.max(240, innerHeight - 8);
+    var w = Math.min(Math.max(300, +r.w || 0), maxW);
+    var h = Math.min(Math.max(240, +r.h || 0), maxH);
+    var l = Math.min(Math.max(0, +r.l || 0), Math.max(0, innerWidth - w));
+    var t = Math.min(Math.max(0, +r.t || 0), Math.max(0, innerHeight - h));
+    return { l: l, t: t, w: w, h: h };
+  }
+  function roomWinApply(r) {
+    roomRect = roomWinClamp(r);
+    var s = roomOv.el.style;
+    s.left = roomRect.l + 'px';
+    s.top = roomRect.t + 'px';
+    s.right = 'auto';
+    s.bottom = 'auto';
+    s.width = roomRect.w + 'px';
+    s.height = roomRect.h + 'px';
+  }
+  function roomWinSave() {
+    if (roomRect) save(K_ROOM_RECT, JSON.stringify(roomRect));
+  }
+  function roomWinInit() {
+    if (roomGrip) return;
+    roomOv.el.classList.add('ai-win');
+    // 移出卡片，挂到 #__ai 根节点：不受卡片布局/全屏影响
+    root.appendChild(roomOv.el);
+    roomGrip = div('ai-roomgrip');
+    roomGrip.title = '拖动调整大小';
+    roomOv.el.append(roomGrip);
+
+    var j = null;
+    try { j = JSON.parse(read(K_ROOM_RECT, '') || 'null'); } catch (e) {}
+    roomWinApply(j || roomWinDefault());
+
+    var bar = roomOv.bar, ds = null;
+    bar.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      if (e.target && e.target.closest && e.target.closest('button,input,textarea,select,a')) return;
+      var r = roomOv.el.getBoundingClientRect();
+      ds = { x: e.clientX, y: e.clientY, l: r.left, t: r.top };
+      try { bar.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+    });
+    bar.addEventListener('pointermove', function (e) {
+      if (!ds) return;
+      roomWinApply({
+        l: ds.l + e.clientX - ds.x,
+        t: ds.t + e.clientY - ds.y,
+        w: roomRect.w, h: roomRect.h
+      });
+    });
+    function dragEnd() {
+      if (!ds) return;
+      ds = null;
+      roomWinSave();
+    }
+    bar.addEventListener('pointerup', dragEnd);
+    bar.addEventListener('pointercancel', dragEnd);
+    bar.addEventListener('dblclick', function (e) {
+      if (e.target && e.target.closest && e.target.closest('button')) return;
+      roomWinApply(roomWinDefault());
+      roomWinSave();
+    });
+
+    var rs = null;
+    roomGrip.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var r = roomOv.el.getBoundingClientRect();
+      rs = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, w: r.width, h: r.height };
+      try { roomGrip.setPointerCapture(e.pointerId); } catch (err) {}
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    roomGrip.addEventListener('pointermove', function (e) {
+      if (!rs) return;
+      roomWinApply({
+        l: rs.l, t: rs.t,
+        w: rs.w + e.clientX - rs.x,
+        h: rs.h + e.clientY - rs.y
+      });
+    });
+    function sizeEnd() {
+      if (!rs) return;
+      rs = null;
+      roomWinSave();
+    }
+    roomGrip.addEventListener('pointerup', sizeEnd);
+    roomGrip.addEventListener('pointercancel', sizeEnd);
+
+    window.addEventListener('resize', function () {
+      if (!root.isConnected) return;
+      if (roomRect && roomOv.el.classList.contains('on')) roomWinApply(roomRect);
+    });
+  }
+
   function openRoom() {
     if (!roomOv) {
       roomOv = regOverlay(mkOv('聊天室（共享）'));
@@ -1795,6 +1914,7 @@
       });
       roomSend.disabled = true;
       roomSend.style.opacity = '.5';
+      roomWinInit();
       syncFullBtns();
     }
     // 昵称固定用登录用户名（需求 7）：没登录 / 没 Token 时禁用输入
@@ -1807,6 +1927,7 @@
       ? '请先在 👤 登录（用户名 + PIN）'
       : (!cfg.gitToken ? '请先在 🔑 保存上传 Token' : '发到聊天室（所有人可见）');
     roomOv.el.classList.add('on');
+    if (roomGrip) roomWinApply(roomRect || roomWinDefault());
     if (overlayStack.indexOf(roomOv) < 0) overlayStack.push(roomOv);
     roomMsgs = loadRoomCache();
     renderRoom();
@@ -1962,7 +2083,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.6 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.7 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -3055,6 +3176,7 @@
     save(K_BASE, b);
   };
   var fullBtns = [fullBtn];
+  var fullSaved = null, lastFullAt = 0;
   function syncFullBtns() {
     var on = root.classList.contains('ai-full');
     fullBtns.forEach(function (b) {
@@ -3065,8 +3187,21 @@
   }
   function toggleFull(force) {
     var on = typeof force === 'boolean' ? force : !root.classList.contains('ai-full');
-    root.classList.toggle('ai-full', on);
+    if (on === root.classList.contains('ai-full')) {
+      syncFullBtns();
+      return;
+    }
+    lastFullAt = Date.now();
     if (on) {
+      // 记住进入全屏前的内联布局（loader 拖动/缩放的 left/top/width/height），退出时原样还原
+      var g0 = root.querySelector('.fh-grip');
+      fullSaved = {
+        style: root.getAttribute('style') || '',
+        float: root.dataset.fhFloat || '',
+        grip: g0 ? g0.style.display : null
+      };
+      if (g0) g0.style.display = 'none';
+      root.classList.add('ai-full');
       // loader 拖动会往 #__ai 写内联尺寸/位置，会和全屏 CSS 打架，进全屏时清掉
       root.dataset.fhFloat = '0';
       ['left', 'top', 'right', 'bottom', 'width', 'height', 'maxHeight',
@@ -3074,6 +3209,17 @@
         root.style[k] = '';
       });
       root.style.inset = '';
+    } else {
+      root.classList.remove('ai-full');
+      if (fullSaved) {
+        if (fullSaved.style) root.setAttribute('style', fullSaved.style);
+        else root.removeAttribute('style');
+        if (fullSaved.float) root.dataset.fhFloat = fullSaved.float;
+        else delete root.dataset.fhFloat;
+        var g1 = root.querySelector('.fh-grip');
+        if (g1 && fullSaved.grip != null) g1.style.display = fullSaved.grip;
+        fullSaved = null;
+      }
     }
     syncFullBtns();
   }
@@ -3140,7 +3286,11 @@
     close();
   }
   closeBtn.onclick = close;
-  shade.onclick = close;
+  // 刚点完全屏按钮，布局还在切换，落在遮罩上的这一下不应关闭窗口
+  shade.onclick = function () {
+    if (Date.now() - lastFullAt < 600) return;
+    close();
+  };
   acctBtn.onclick = function (e) { e.stopPropagation(); openAcct(); };
   acctBtn.style.color = acctRec() ? '#6f9bff' : '';
   acctBtn.title = acctRec() ? ('账号：' + acctRec().user) : '账号（用户名 + PIN）';

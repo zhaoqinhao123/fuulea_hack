@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.6';
+  var TAG = '3.7';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -1127,7 +1127,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.6', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.7', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
@@ -1155,7 +1155,8 @@
       '--fh-text:#2a2a32;--fh-btn:#4c4c5a;--fh-ta:rgba(255,255,255,.72);',
       '--fh-scroll:rgba(0,0,0,.18);',
       '--fh-shadow:0 18px 48px rgba(20,20,40,.22),inset 0 1px 0 rgba(255,255,255,.8)}',
-      '#__fh .fh-panel{position:relative;display:flex;flex-direction:column;width:min(318px,88vw);max-height:86vh;',
+      '#__fh .fh-panel{position:relative;display:flex;flex-direction:column;width:min(318px,88vw);',
+      'height:min(400px,86vh);max-height:86vh;',
       'background:transparent;',
       'border:1px solid var(--fh-border);border-radius:16px;overflow:hidden;',
       'box-shadow:var(--fh-shadow)}',
@@ -1206,6 +1207,7 @@
       'background:transparent;font:15px/1 inherit;cursor:pointer;padding:0;',
       'display:grid;place-items:center}',
       '#__fh.is-mini .fh-panel{width:88px;border-radius:999px;border-color:var(--fh-border);',
+      'height:auto;max-height:none;',
       'box-shadow:0 10px 26px rgba(0,0,0,.5)}',
       '#__fh.is-mini .fh-head{padding:5px 6px;gap:2px;justify-content:center;cursor:move}',
       '#__fh.is-mini .fh-title,#__fh.is-mini .fh-tabs,#__fh.is-mini .fh-content,#__fh.is-mini .fh-min{display:none}',
@@ -1646,6 +1648,7 @@
 
       // 右下角缩放手柄
       var grip = document.createElement('div');
+      grip.className = 'fh-grip';
       grip.style.cssText = 'display:none;position:absolute;right:2px;bottom:2px;width:20px;height:20px;z-index:9;' +
         'cursor:se-resize;touch-action:none;border-radius:0 0 14px 0;' +
         'background:linear-gradient(135deg,transparent 45%,rgba(255,255,255,.32) 45%,rgba(255,255,255,.32) 55%,transparent 55%,' +
