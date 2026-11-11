@@ -5,7 +5,7 @@
   function shell(title, id, onClose) {
     var d = document.createElement('div');
     if (id) d.id = id;
-    d.style.cssText = 'position:fixed;inset:0;z-index:2147483645;background:rgba(10,10,12,.95);display:flex;flex-direction:column;font:13px/1.5 -apple-system,"PingFang SC",sans-serif;color:#ddd';
+    d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#0a0a0c;display:flex;flex-direction:column;font:13px/1.5 -apple-system,"PingFang SC",sans-serif;color:#ddd';
 
     var bar = document.createElement('div');
     bar.style.cssText = 'height:52px;display:flex;align-items:center;gap:6px;padding:0 10px;background:rgba(0,0,0,.45);flex-shrink:0';
@@ -213,7 +213,8 @@
     v.playsInline = true;
     v.muted = true;
     v.setAttribute('playsinline', '');
-    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:cover';
+    // v3.9：contain 保留完整取景范围，比例不一致时上下/左右用黑边补，不裁切
+    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:contain';
     s.body.append(v);
 
     // 把关闭回调接上：关面板前先录像落盘 + 释放摄像头
@@ -221,12 +222,19 @@
     closeBtn.addEventListener('click', function () { cleanup(); }, true);
 
     var ctl = document.createElement('div');
-    ctl.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;gap:10px;justify-content:center;padding:14px;background:linear-gradient(transparent,rgba(0,0,0,.6))';
+    ctl.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;gap:22px;align-items:center;justify-content:center;padding:18px 14px 24px;background:linear-gradient(transparent,rgba(0,0,0,.72))';
 
-    var shot = btn('📸 拍照', 'background:#fff;color:#111;border:0');
+    // 圆形快门：外圈是半透明白环，里面实心白圆，点按即拍
+    var shot = document.createElement('button');
+    shot.type = 'button';
+    shot.title = '拍照';
+    shot.setAttribute('aria-label', '拍照');
+    shot.style.cssText = 'width:68px;height:68px;padding:0;border:4px solid rgba(255,255,255,.85);border-radius:50%;background:#fff;box-shadow:0 0 0 4px rgba(0,0,0,.25),0 4px 18px rgba(0,0,0,.45);cursor:pointer;flex:0 0 auto;transition:transform .12s';
+    shot.onpointerdown = function () { shot.style.transform = 'scale(.92)'; };
+    shot.onpointerup = function () { shot.style.transform = ''; };
     var rec = btn('🎥 录像');
     var flip = btn('🔄 翻转');
-    ctl.append(shot, rec, flip);
+    ctl.append(flip, shot, rec);
     s.body.append(ctl);
 
     // 变焦 / 手动对焦：优先用摄像头硬件能力，没有就退回画面裁切

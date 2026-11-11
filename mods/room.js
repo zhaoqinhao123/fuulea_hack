@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.8 — 独立于 AI 网页的浮窗；消息存 GitLab message/ */
+/* 聊天室（共享）v3.9 — 独立于 AI 网页的浮窗；消息存 GitLab message/ */
 (function () {
   'use strict';
 
@@ -559,7 +559,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.8';
+  badge.textContent = 'v3.9';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   var refreshBtn = document.createElement('button');

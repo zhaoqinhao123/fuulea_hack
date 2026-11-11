@@ -26,16 +26,28 @@
   var old = document.getElementById('__fw');
   if (old) { old.remove(); return; }
 
-  // v3.3：网页窗口栈。← 关闭当前页并回到上一个网页。
+  // v3.9：网页窗口栈。只显示栈顶；← 退回上一个网页，栈底再退就回网页列表。
   var vstack = [];
   function refreshBacks() {
     vstack.forEach(function (w, i) {
       if (w.__backBtn) {
-        w.__backBtn.disabled = i === 0;
-        w.__backBtn.style.opacity = i === 0 ? '.3' : '1';
-        w.__backBtn.title = i === 0 ? '没有上一个网页' : '返回上一个网页';
+        w.__backBtn.disabled = false;
+        w.__backBtn.style.opacity = '1';
+        w.__backBtn.title = i === 0 ? '返回网页列表' : '返回上一个网页';
       }
     });
+  }
+  function showTop() {
+    var top = vstack[vstack.length - 1] || null;
+    vstack.forEach(function (w) { w.style.display = w === top ? 'flex' : 'none'; });
+    if (top) {
+      // 其余窗口都 display:none，只剩栈顶可见；不要再 append 移动 iframe，
+      // 部分浏览器会因此重新加载页面、丢掉当前网页状态。
+      root.style.display = 'none';
+    } else {
+      root.style.display = 'flex';
+    }
+    refreshBacks();
   }
 
   var sites = load();
@@ -183,17 +195,14 @@
     var close = ib('✕', '关闭');
     var back = ib('←', '返回上一个网页');
     back.style.fontSize = '16px';
-    function closeWin() {
+    function dropWin() {
       var i = vstack.indexOf(win);
       if (i >= 0) vstack.splice(i, 1);
       win.remove();
-      // 抬出上一个网页（它一直在 DOM 里，重新 append 到最前）
-      var prev = vstack[vstack.length - 1];
-      if (prev) { try { document.body.appendChild(prev); } catch (e) {} }
-      refreshBacks();
+      showTop();
     }
-    back.onclick = closeWin;
-    close.onclick = closeWin;
+    back.onclick = dropWin;   // 栈顶返回上一个；已经是栈底就回列表
+    close.onclick = dropWin;  // 关闭当前，露出上一个/列表
 
     var saved = null;
     max.onclick = function () {
@@ -234,7 +243,7 @@
     win.append(bar, frame, tip);
     win.__backBtn = back;
     vstack.push(win);
-    refreshBacks();
+    showTop();
 
     // 拖动
     var sx = 0, sy = 0, ox = 0, oy = 0, on = false;

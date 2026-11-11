@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.8';
+  var TAG = '3.9';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -1113,6 +1113,7 @@
     '工具': [
       ['🌐 网页', 'mods/embed.js'],
       ['📷 相机', 'mods/media.js'],
+      ['🧭 探测', 'mods/probe.js'],
       ['📂 文件', 'mods/browser.js'],
       ['📖 小说', 'mods/novel.js'],
       ['🎵 音乐', 'mods/music.js'],
@@ -1131,7 +1132,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.8', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.9', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
@@ -1419,9 +1420,10 @@
   }
 
   // 主面板透明度：只淡背景/标签/内容，标题栏始终可操作，最低 5%
-  var mainOpVal = 100;
-  try { mainOpVal = parseInt(localStorage.getItem('fh:mainOp') || '100', 10); } catch (e) {}
-  if (isNaN(mainOpVal)) mainOpVal = 100;
+  // v3.9：默认 10%，注入后几乎隐形；标题栏仍保留，方便找回和调回
+  var mainOpVal = 10;
+  try { mainOpVal = parseInt(localStorage.getItem('fh:mainOp') || '10', 10); } catch (e) {}
+  if (isNaN(mainOpVal)) mainOpVal = 10;
   mainOpVal = Math.max(5, Math.min(100, mainOpVal));
 
   var mainOpPop = document.createElement('div');
@@ -1720,26 +1722,75 @@
         if (!pinned) el.style.zIndex = String(Math.min(++zTop, 2147483646));
       }, true);
 
+      // v3.9：AI 窗口默认就是浮动窗；位置/大小按窗口 id 记住，全屏只是临时收起
+      var isAI = el.id === '__ai';
+      var rectKey = isAI ? 'fh:ai:rect' : '';
+
+      function clampRect(r) {
+        var maxW = Math.max(240, innerWidth - 12);
+        var maxH = Math.max(200, innerHeight - 12);
+        var minW = Math.min(isAI ? 320 : 280, maxW);
+        var minH = Math.min(isAI ? 360 : 200, maxH);
+        var w = Math.max(minW, Math.min(Number(r.w) || minW, maxW));
+        var h = Math.max(minH, Math.min(Number(r.h) || minH, maxH));
+        var l = Math.max(6, Math.min(Number(r.l) || 0, innerWidth - w - 6));
+        var t = Math.max(6, Math.min(Number(r.t) || 0, innerHeight - h - 6));
+        // 手机竖屏不留下左右缝，直接铺满可用宽度
+        if (innerWidth < 560) { l = 6; w = maxW; }
+        if (innerHeight < 480) { t = 6; h = maxH; }
+        return { l: Math.round(l), t: Math.round(t), w: Math.round(w), h: Math.round(h) };
+      }
+      function savedRect() {
+        if (!rectKey) return null;
+        try {
+          var j = JSON.parse(localStorage.getItem(rectKey) || 'null');
+          if (j && isFinite(j.l) && isFinite(j.t) && isFinite(j.w) && isFinite(j.h)) return j;
+        } catch (e) {}
+        return null;
+      }
+      function saveRect() {
+        if (!rectKey || el.dataset.fhFloat !== '1') return;
+        var r = el.getBoundingClientRect();
+        try {
+          localStorage.setItem(rectKey, JSON.stringify({
+            l: Math.round(r.left), t: Math.round(r.top),
+            w: Math.round(r.width), h: Math.round(r.height)
+          }));
+        } catch (e) {}
+      }
+
       function toFloat() {
-        var W = Math.min(Math.round(innerWidth * 0.9), 760);
-        var H = Math.round(innerHeight * 0.78);
+        var dw = isAI ? Math.min(Math.round(innerWidth * 0.92), 860)
+                      : Math.min(Math.round(innerWidth * 0.9), 760);
+        var dh = isAI ? Math.min(Math.round(innerHeight * 0.86), 820)
+                      : Math.round(innerHeight * 0.78);
+        var r = clampRect(el.__fhRect || savedRect() || {
+          l: Math.round((innerWidth - dw) / 2),
+          t: Math.round((innerHeight - dh) / 2),
+          w: dw, h: dh
+        });
         el.dataset.fhFloat = '1';
         el.style.inset = 'auto';
         el.style.transform = 'none';
-        el.style.left = Math.max(6, Math.round((innerWidth - W) / 2)) + 'px';
-        el.style.top = Math.max(30, Math.round((innerHeight - H) / 2)) + 'px';
+        el.style.left = r.l + 'px';
+        el.style.top = r.t + 'px';
         el.style.right = 'auto';
         el.style.bottom = 'auto';
-        el.style.width = 'min(90vw,760px)';
-        el.style.height = '78vh';
-        el.style.maxHeight = '78vh';
-        el.style.borderRadius = '14px';
-        el.style.boxShadow = '0 20px 60px rgba(0,0,0,.6)';
+        el.style.width = r.w + 'px';
+        el.style.height = r.h + 'px';
+        el.style.maxHeight = 'none';
+        el.style.borderRadius = isAI ? '16px' : '14px';
+        el.style.boxShadow = isAI ? 'none' : '0 20px 60px rgba(0,0,0,.6)';
         el.style.overflow = 'hidden';
         grip.style.display = 'block';
         if (mb) mb.style.color = '#5b8dfa';
       }
       function toFull() {
+        if (el.dataset.fhFloat === '1') {
+          var r = el.getBoundingClientRect();
+          el.__fhRect = { l: r.left, t: r.top, w: r.width, h: r.height };
+          saveRect();
+        }
         el.dataset.fhFloat = '0';
         el.style.inset = '0';
         el.style.left = '';
@@ -1756,10 +1807,37 @@
         grip.style.display = 'none';
         if (mb) mb.style.color = '#8a8a99';
       }
+      el.__fhToFloat = toFloat;
+      el.__fhToFull = toFull;
       if (mb) mb.onclick = function (e) {
         e.stopPropagation();
         if (el.dataset.fhFloat === '1') toFull(); else toFloat();
       };
+
+      // AI 打开即浮动，不再先铺满全屏再等用户拖一下
+      if (isAI) toFloat();
+
+      // 视口变化时把窗口收回屏幕内，并记住最终位置
+      // 防抖：Chrome 从模拟视口切回真实窗口时会短暂经过一个很小的中间尺寸，
+      // 立刻 clamp 会把 AI 压成 320×360 并写进 localStorage。
+      if (isAI) var aiRzTimer = 0;
+      if (isAI) window.addEventListener('resize', function () {
+        if (!el.isConnected || el.dataset.fhFloat !== '1') return;
+        clearTimeout(aiRzTimer);
+        aiRzTimer = setTimeout(function () {
+          if (!el.isConnected || el.dataset.fhFloat !== '1') return;
+          // 最小化/切后台时浏览器会给出 0 尺寸，别把窗口压成最小尺寸并写回
+          if (innerWidth < 240 || innerHeight < 240) return;
+          var br = el.getBoundingClientRect();
+          if (br.width < 100 || br.height < 100) return;
+          var r = clampRect({ l: br.left, t: br.top, w: br.width, h: br.height });
+          el.style.left = r.l + 'px';
+          el.style.top = r.t + 'px';
+          el.style.width = r.w + 'px';
+          el.style.height = r.h + 'px';
+          saveRect();
+        }, 160);
+      });
 
       // 拖动标题栏空白处
       var ds = null;
@@ -1777,29 +1855,32 @@
         el.style.left = Math.max(2, Math.min(ds.l + e.clientX - ds.x, innerWidth - 70)) + 'px';
         el.style.top = Math.max(2, Math.min(ds.t + e.clientY - ds.y, innerHeight - 50)) + 'px';
       });
-      bar.addEventListener('pointerup', function () { ds = null; });
-      bar.addEventListener('pointercancel', function () { ds = null; });
+      bar.addEventListener('pointerup', function () { if (ds) saveRect(); ds = null; });
+      bar.addEventListener('pointercancel', function () { if (ds) saveRect(); ds = null; });
 
       // 缩放
       var rs = null;
       grip.addEventListener('pointerdown', function (e) {
         e.stopPropagation(); e.preventDefault();
         var r = el.getBoundingClientRect();
-        rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height };
+        rs = { x: e.clientX, y: e.clientY, w: r.width, h: r.height, l: r.left, t: r.top };
         try { grip.setPointerCapture(e.pointerId); } catch (err) {}
       });
       grip.addEventListener('pointermove', function (e) {
         if (!rs) return;
+        var maxW = Math.max(240, innerWidth - rs.l - 6);
+        var maxH = Math.max(200, innerHeight - rs.t - 6);
         el.style.maxHeight = 'none';
-        el.style.width = Math.max(280, rs.w + e.clientX - rs.x) + 'px';
-        el.style.height = Math.max(200, rs.h + e.clientY - rs.y) + 'px';
+        el.style.width = Math.max(280, Math.min(rs.w + e.clientX - rs.x, maxW)) + 'px';
+        el.style.height = Math.max(200, Math.min(rs.h + e.clientY - rs.y, maxH)) + 'px';
       });
-      grip.addEventListener('pointerup', function () { rs = null; });
-      grip.addEventListener('pointercancel', function () { rs = null; });
+      grip.addEventListener('pointerup', function () { if (rs) saveRect(); rs = null; });
+      grip.addEventListener('pointercancel', function () { if (rs) saveRect(); rs = null; });
     }
 
     function scan(n) {
       if (!n || n.nodeType !== 1) return;
+      if (n.dataset && n.dataset.fhSkip === '1') return;
       if (n.tagName === 'DIV' && n.id !== '__fh' && n.parentElement === document.body) {
         var cs = getComputedStyle(n);
         var full = cs.position === 'fixed' &&
