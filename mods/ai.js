@@ -19,6 +19,8 @@
   var K_AUTO = 'fh:ai:gitAuto';
   var K_MODEL = 'fh:ai:model';
   var K_MODELS = 'fh:ai:models';
+  var K_PROFILES = 'fh:ai:profiles';    // v3.12：多份 API 配置
+  var K_PROFILE = 'fh:ai:profileId';
   var K_MODE = 'fh:ai:mode';
   var K_SESS = 'fh:ai:sessions';
   var K_SID = 'fh:ai:sid';
@@ -735,7 +737,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.11';
+  ver.textContent = 'v3.12';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -851,6 +853,7 @@
     setDot();
     setStat();
     paintAcct();
+    syncProfile();
     cfgMsg.textContent = 'Key 已保存到本机（之后只显示掩码）· 用户隔离：' + ownerTag + (acctUid() ? '（账号）' : '');
   });
 
@@ -955,6 +958,7 @@
       acctBtn.style.color = ar ? '#6f9bff' : '';
       acctBtn.title = ar ? ('账号：' + ar.user) : '账号（用户名 + PIN）';
     } catch (e) {}
+    try { syncProfile(); } catch (e2) {}
   }
   try { window.addEventListener('fh:acct', acctSync); } catch (e) {}
   paintAcct();
@@ -1038,9 +1042,205 @@
   modeSel.value = cfg.mode;
   modeRow.append(modeLab, modeSel);
 
-  var hint = div('ai-hint', 'Key / Token 只存本机；图片上传到 ' + GIT_PROJ + ':' + GIT_BRANCH + '/media/<用户名>/。');
+  // ── v3.12：多份 API 配置（Key / 地址 / 模型 / 接口），本机保存并随云端配置同步 ──
+  var profiles = [];
+  var profileId = '';
+  var profTimer = 0;
+  var pushTimer = 0;
+
+  function pidNew() { return 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+  function profSnap() {
+    return {
+      key: cfg.key || '',
+      base: cfg.base,
+      model: cfg.model,
+      mode: cfg.mode,
+      models: (modelList || []).slice(0, 300)
+    };
+  }
+  function profById(id) {
+    for (var i = 0; i < profiles.length; i++) if (profiles[i].id === id) return profiles[i];
+    return null;
+  }
+  // 配置变动 → 延迟上传加密配置（云端），没有 Token 就静默跳过
+  function cloudPush(now) {
+    try {
+      if (!(window.__fhCfg && window.__fhCfg.can && window.__fhCfg.can())) return;
+    } catch (e) { return; }
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(function () {
+      try {
+        window.__fhCfg.push(function (r) {
+          if (r && r.ok) {
+            cfgMsg.title = '配置已同步到云端 · ' + new Date().toLocaleTimeString();
+            cfgMsg.textContent = '已同步到云端' + (r.n ? '（' + r.n + ' 个键）' : '');
+          } else {
+            cfgMsg.title = '云端同步失败：' + ((r && (r.msg || r.status)) || '未知错误');
+          }
+        });
+      } catch (e) {}
+    }, now ? 60 : 1200);
+  }
+  function saveProfiles(noPush) {
+    try { save(K_PROFILES, JSON.stringify(profiles)); } catch (e) {}
+    if (!noPush) cloudPush();
+  }
+  // 表单里的值回写当前配置（防抖，避免每敲一个字都写）
+  // 注意：快照要在调用时就取，否则切换配置后定时器会把新值写回旧配置
+  function syncProfile(now) {
+    clearTimeout(profTimer);
+    var pid = profileId;
+    var s = profSnap();
+    profTimer = setTimeout(function () {
+      var p = profById(pid);
+      if (!p) return;
+      p.key = s.key; p.base = s.base; p.model = s.model; p.mode = s.mode; p.models = s.models;
+      saveProfiles(now);
+    }, now ? 0 : 400);
+  }
+  function rebuildModelSel(ids) {
+    ids = Array.isArray(ids) ? ids : [];
+    modelSel.innerHTML = '';
+    ids.forEach(function (id) {
+      var o = document.createElement('option');
+      o.value = id;
+      o.textContent = id;
+      modelSel.append(o);
+    });
+    modelSel.style.display = ids.length ? '' : 'none';
+    if (ids.indexOf(cfg.model) >= 0) modelSel.value = cfg.model;
+  }
+
+  // 首次升级：用现有单份配置生成「默认配置」
+  try {
+    var rawProf = read(K_PROFILES, '');
+    if (rawProf) {
+      var arr = JSON.parse(rawProf);
+      if (Object.prototype.toString.call(arr) === '[object Array]') {
+        profiles = arr.filter(function (p) { return p && typeof p === 'object'; }).map(function (p) {
+          return {
+            id: p.id || pidNew(),
+            name: String(p.name || '配置'),
+            key: String(p.key || ''),
+            base: /^https?:\/\//i.test(p.base || '') ? p.base : 'https://api.deepseek.com',
+            model: String(p.model || 'deepseek-flash'),
+            mode: p.mode === 'responses' ? 'responses' : 'chat',
+            models: Object.prototype.toString.call(p.models) === '[object Array]' ? p.models.slice(0, 300) : []
+          };
+        });
+      }
+    }
+  } catch (e) {}
+  if (!profiles.length) {
+    var p0 = profSnap();
+    p0.id = pidNew();
+    p0.name = '默认配置';
+    profiles = [p0];
+    saveProfiles(true);   // 首次迁移不必立刻上云
+  }
+  profileId = read(K_PROFILE, '') || profiles[0].id;
+  if (!profById(profileId)) profileId = profiles[0].id;
+
+  var profRow = div('ai-row');
+  var profLab = document.createElement('label');
+  profLab.textContent = '配置';
+  var profSel = document.createElement('select');
+  profSel.className = 'ai-sel';
+  profSel.title = '切换 API 配置（Key / 地址 / 模型 / 接口）';
+  var profAdd = button('＋', 'ai-mini', '把当前设置另存为新配置');
+  var profRen = button('✎', 'ai-mini', '重命名当前配置');
+  var profDel = button('🗑', 'ai-mini', '删除当前配置');
+  [profAdd, profRen, profDel].forEach(function (b) { b.style.flexShrink = '0'; });
+  profRow.append(profLab, profSel, profAdd, profRen, profDel);
+
+  function paintProfiles() {
+    profSel.innerHTML = '';
+    profiles.forEach(function (p) {
+      var o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = p.name;
+      profSel.append(o);
+    });
+    profSel.value = profileId;
+    profDel.title = profiles.length < 2 ? '至少保留一份配置' : '删除当前配置';
+  }
+  function applyProfile(id, silent) {
+    var p = profById(id);
+    if (!p) return;
+    profileId = p.id;
+    save(K_PROFILE, p.id);
+    cfg.key = p.key || '';
+    cfg.base = /^https?:\/\//i.test(p.base || '') ? p.base : 'https://api.deepseek.com';
+    cfg.model = String(p.model || 'deepseek-flash').trim() || 'deepseek-flash';
+    cfg.mode = p.mode === 'responses' ? 'responses' : 'chat';
+    modelList = Array.isArray(p.models) ? p.models.slice(0, 300) : [];
+    save(K_KEY, cfg.key);
+    save(K_BASE, cfg.base);
+    save(K_MODEL, cfg.model);
+    save(K_MODE, cfg.mode);
+    save(K_MODELS, JSON.stringify(modelList));
+    keyField.set(cfg.key);
+    baseIn.value = cfg.base;
+    modelIn.value = cfg.model;
+    modeSel.value = cfg.mode;
+    rebuildModelSel(modelList);
+    try { if (window.__fhAcct && window.__fhAcct.saveKey) window.__fhAcct.saveKey(cfg.key); } catch (e) {}
+    profSel.value = p.id;
+    setDot();
+    setStat();
+    paintAcct();
+    if (!silent) cfgMsg.textContent = '已切换到「' + p.name + '」· ' + cfg.base + ' · ' + cfg.model;
+  }
+  profSel.onchange = function () {
+    syncProfile(true);
+    applyProfile(profSel.value);
+  };
+  profAdd.onclick = function (e) {
+    e.stopPropagation();
+    syncProfile(true);
+    var name = prompt('新配置名称（例如：DeepSeek 官方 / 中转 / 本地）', '配置 ' + (profiles.length + 1));
+    if (name == null) return;
+    name = String(name).trim() || ('配置 ' + (profiles.length + 1));
+    var s = profSnap();
+    s.id = pidNew();
+    s.name = name;
+    profiles.push(s);
+    saveProfiles();
+    paintProfiles();
+    applyProfile(s.id);
+    cfgMsg.textContent = '已另存为「' + name + '」并切换过去';
+  };
+  profRen.onclick = function (e) {
+    e.stopPropagation();
+    var p = profById(profileId);
+    if (!p) return;
+    var name = prompt('重命名配置', p.name);
+    if (name == null) return;
+    name = String(name).trim();
+    if (!name) return;
+    p.name = name;
+    saveProfiles();
+    paintProfiles();
+    cfgMsg.textContent = '已重命名为「' + name + '」';
+  };
+  profDel.onclick = function (e) {
+    e.stopPropagation();
+    if (profiles.length < 2) { cfgMsg.textContent = '至少要保留一份配置'; return; }
+    var p = profById(profileId);
+    if (!p) return;
+    if (!confirm('删除配置「' + p.name + '」？只删本机这一份记录，不影响模型服务商那边。')) return;
+    profiles = profiles.filter(function (x) { return x.id !== p.id; });
+    saveProfiles();
+    applyProfile(profiles[0].id);
+    paintProfiles();
+    cfgMsg.textContent = '已删除「' + p.name + '」';
+  };
+
+  var hint = div('ai-hint', 'Key / Token 只存本机；配置可多份保存，有上传 Token 时会随加密配置同步到云端；图片上传到 ' + GIT_PROJ + ':' + GIT_BRANCH + '/media/<用户名>/。');
   var cfgMsg = div('ai-cfgmsg', '');
-  cfgBox.append(acctRow, keyField.row, baseRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
+  cfgBox.append(profRow, acctRow, keyField.row, baseRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
+  paintProfiles();
+  applyProfile(profileId, true);
 
   // 对话区
   var msgs = div('ai-msgs');
@@ -2248,9 +2448,11 @@
   };
 
   function setStat() {
+    // v3.12：「配置」行在状态栏之前创建，初始化时会先调用到这里
+    if (!statTxt) return;
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.11 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.12 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -2601,9 +2803,13 @@
     attachTit.textContent = '已选 ' + list.length + '/' + MAX_IMAGES + ' 张' +
       (done ? ' · 已传 ' + done : '') + (running ? ' · 处理中 ' + running : '') +
       (bad ? ' · 待重试 ' + bad : '');
-    attachUp.style.display = (cfg.gitToken && list.some(function (i) {
+    // v3.12：没 Token 也显示，点了引导去设置，而不是「按钮消失」
+    var canUp = list.some(function (i) {
       return i.dataUrl && i.state !== 'uploaded' && i.state !== 'uploading';
-    })) ? '' : 'none';
+    });
+    attachUp.style.display = canUp ? '' : 'none';
+    attachUp.title = cfg.gitToken ? '把还没上传的图片传到 GitLab media/<用户名>/'
+      : '还没设置上传 Token：点这里去设置里填';
   }
 
   function removeImage(item) {
@@ -2682,6 +2888,9 @@
           uploadImage(item);
           return;
         }
+        // v3.12：上传失败要看得见，不再只藏在 title 里
+        labelToast('照片上传失败：' + item.error);
+        cfgMsg.textContent = '照片上传失败：' + item.error + '（可点缩略图右下角重试）';
       }
       renderAttach();
     };
@@ -2734,7 +2943,7 @@
       remotePath: '',
       file: file,
       xhr: null,
-      maxEdge: file && file._cam ? 4096 : 2048
+      maxEdge: file && file._cam ? Math.min(camMax(), 2560) : 2048
     };
     pendingImages.push(item);
     photoQueue.push(item);
@@ -2783,6 +2992,7 @@
       if (cfg.autoUpload && cfg.gitToken) uploadImage(item);
       else {
         item.state = cfg.gitToken ? 'off' : 'no-token';
+        if (!cfg.gitToken) labelToast('没有上传 Token：照片先存本机相册，填 Token 后可再上传');
         renderAttach();
       }
     }).catch(function (e) {
@@ -2800,6 +3010,41 @@
     });
   }
 
+  // v3.12：相机拍照分辨率（长边）；和聊天室相机共用 fh:cam:res
+  var CAM_RES = [[3840, '4K'], [2560, '2K'], [1920, '1080P'], [1280, '720P']];
+  function camMax() {
+    var r = parseInt(read('fh:cam:res', '2560'), 10);
+    for (var i = 0; i < CAM_RES.length; i++) if (r === CAM_RES[i][0]) return r;
+    return 2560;
+  }
+  function camMaxLabel() {
+    var r = camMax();
+    for (var i = 0; i < CAM_RES.length; i++) if (r === CAM_RES[i][0]) return CAM_RES[i][1];
+    return '2K';
+  }
+  function downscaleBlob(blob, cb) {
+    var max = camMax();
+    var url = URL.createObjectURL(blob);
+    var im = new Image();
+    im.onload = function () {
+      var w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+      var sc = Math.min(1, max / Math.max(w, h));
+      if (!w || !h || sc >= 0.999) {
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        cb(blob);
+        return;
+      }
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * sc));
+      c.height = Math.max(1, Math.round(h * sc));
+      try { c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); } catch (e) {}
+      try { URL.revokeObjectURL(url); } catch (e) {}
+      c.toBlob(function (b) { cb(b || blob); }, 'image/jpeg', 0.92);
+    };
+    im.onerror = function () { try { URL.revokeObjectURL(url); } catch (e) {} cb(blob); };
+    im.src = url;
+  }
+
   // v3.3 拍照：优先调用网页相机（getUserMedia），不支持时回退文件选择
   function openCam() {
     if (closed) return;
@@ -2812,8 +3057,9 @@
     v.muted = true;
     v.style.cssText = 'flex:1;min-height:0;width:100%;object-fit:contain;background:#000';
     var bar = div('ai-cambar');
-    bar.style.cssText = 'position:relative;z-index:3;display:flex;align-items:center;justify-content:center;gap:26px;' +
-      'padding:14px 18px 26px;background:#111';
+    // v3.12：快门移到右侧，翻转留在左侧，✕ 挪到右上角
+    bar.style.cssText = 'position:relative;z-index:3;display:flex;align-items:center;justify-content:flex-end;gap:24px;' +
+      'padding:16px 26px 28px;background:#111';
 
     // v3.9：圆形快门，放在中间；翻转/关闭分列两侧
     var snap = document.createElement('button');
@@ -2827,16 +3073,37 @@
     snap.onpointerup = function () { snap.style.transform = ''; };
     var flip = button('🔄', 'ai-mini');
     flip.title = '翻转';
+    flip.style.cssText = 'margin-right:auto;width:44px;height:44px;border-radius:50%;font-size:19px';
     var x = button('✕', 'ai-mini');
     x.title = '关闭';
-    bar.append(flip, snap, x);
-    ov.append(v, bar);
+    x.style.cssText = 'position:absolute;top:14px;right:14px;z-index:7;width:36px;height:36px;padding:0;' +
+      'border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.55);color:#fff;font-size:16px;line-height:1';
+    bar.append(flip, snap);
+    ov.append(v, bar, x);
+
+    // 拍照分辨率：4K / 2K / 1080P / 720P（长边）
+    var resSel = document.createElement('select');
+    resSel.title = '拍照分辨率（长边）';
+    resSel.style.cssText = 'position:absolute;top:14px;left:14px;z-index:7;padding:7px 9px;border-radius:8px;' +
+      'border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.55);color:#fff;font:12px/1 inherit;outline:none';
+    CAM_RES.forEach(function (r) {
+      var o = document.createElement('option');
+      o.value = String(r[0]);
+      o.textContent = '拍照 ' + r[1];
+      resSel.append(o);
+    });
+    resSel.value = String(camMax());
+    resSel.onchange = function () {
+      save('fh:cam:res', resSel.value);
+      cfgMsg.textContent = '拍照分辨率已设为 ' + camMaxLabel() + '（长边 ' + resSel.value + 'px）';
+    };
+    ov.append(resSel);
     // 挂到 body：AI 根窗口本身是层叠上下文，放 card 里会被网页/列表遮罩压住
     document.body.appendChild(ov);
 
     // 变焦条：优先摄像头原生 zoom，不支持时用画面缩放 + 中心裁切
     var zBox = div();
-    zBox.style.cssText = 'position:absolute;top:14px;right:14px;z-index:5;display:flex;align-items:center;' +
+    zBox.style.cssText = 'position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:5;display:flex;align-items:center;' +
       'gap:7px;padding:7px 10px;border-radius:999px;background:rgba(0,0,0,.58);color:#fff;' +
       'backdrop-filter:blur(8px);font:12px/1 inherit';
     var zOut = document.createElement('button');
@@ -2946,14 +3213,7 @@
           var finish = function (blob) {
             if (done) return;
             done = true;
-            if (!blob) { snapCanvas(); return; }
-            var name = 'cam-' + stamp() + '.jpg';
-            var f;
-            try { f = new File([blob], name, { type: blob.type || 'image/jpeg' }); }
-            catch (e) { f = blob; try { f.name = name; } catch (e2) {} }
-            try { f._cam = true; } catch (e) {}
-            stopCam();
-            handlePhoto(f);
+            deliver(blob);
           };
           try {
             // 有软件变焦（zoom>1 且非原生）时，takePhoto 后 canvas 中心裁切 zoom 比例，保持成片=预览
@@ -2964,26 +3224,11 @@
                   if (done) return;
                   done = true;
                   if (!b) { snapCanvas(); return; }
-                  cropZoomBlob(b, zoom, function (cropped) {
-                    var name = 'cam-' + stamp() + '.jpg';
-                    var f;
-                    try { f = new File([cropped], name, { type: cropped.type || 'image/jpeg' }); }
-                    catch (e) { f = cropped; try { f.name = name; } catch (e2) {} }
-                    try { f._cam = true; } catch (e) {}
-                    stopCam();
-                    handlePhoto(f);
-                  });
+                  cropZoomBlob(b, zoom, function (cropped) { deliver(cropped); });
                 }).catch(function () { snapCanvas(); });
                 return;
               }
-              cropZoomBlob(pr2, zoom, function (cropped) {
-                var name = 'cam-' + stamp() + '.jpg';
-                var f;
-                try { f = new File([cropped], name, { type: cropped.type || 'image/jpeg' }); }
-                catch (e) { f = cropped; try { f.name = name; } catch (e2) {} }
-                stopCam();
-                handlePhoto(f);
-              });
+              cropZoomBlob(pr2, zoom, function (cropped) { deliver(cropped); });
               return;
             }
             var pr = cap.takePhoto();
@@ -2994,6 +3239,19 @@
         }
       }
       snapCanvas();
+    }
+    // v3.12：成片统一按分辨率设置降采样再入队，避免 4K 大图传不上去
+    function deliver(blob) {
+      if (!blob) { snapCanvas(); return; }
+      downscaleBlob(blob, function (b) {
+        var name = 'cam-' + stamp() + '.jpg';
+        var f;
+        try { f = new File([b], name, { type: 'image/jpeg' }); }
+        catch (e) { f = b; try { f.name = name; } catch (e2) {} }
+        try { f._cam = true; } catch (e) {}
+        stopCam();
+        handlePhoto(f);
+      });
     }
     function snapCanvas() {
       if (!v.videoWidth || !v.videoHeight) { cfgMsg.textContent = '相机还没准备好'; return; }
@@ -3007,12 +3265,7 @@
       catch (e) { cfgMsg.textContent = '拍照失败：' + (e && e.message ? e.message : e); return; }
       c.toBlob(function (blob) {
         if (!blob) { cfgMsg.textContent = '拍照失败（无图像数据）'; return; }
-        var name = 'cam-' + stamp() + '.jpg';
-        var f;
-        try { f = new File([blob], name, { type: 'image/jpeg' }); }
-        catch (e) { f = blob; try { f.name = name; } catch (e2) {} }
-        stopCam();
-        handlePhoto(f);
+        deliver(blob);
       }, 'image/jpeg', 0.92);
     }
     function cropZoomBlob(blob, z, cb) {
@@ -3488,6 +3741,7 @@
     save(K_MODEL, m);
     modelSel.value = m;
     setStat();
+    syncProfile();
   };
   modelSel.onchange = function () {
     var m = String(modelSel.value || '').trim();
@@ -3496,6 +3750,7 @@
     modelIn.value = m;
     save(K_MODEL, m);
     setStat();
+    syncProfile();
   };
   scanBtn.onclick = function (e) {
     e.stopPropagation();
@@ -3545,6 +3800,7 @@
       }
       modelList = ids;
       save(K_MODELS, JSON.stringify(ids));
+      syncProfile(true);
       modelSel.innerHTML = '';
       ids.forEach(function (id) {
         var o = document.createElement('option');
@@ -3560,6 +3816,7 @@
         setStat();
       }
       modelSel.value = cfg.model;
+      syncProfile(true);
       cfgMsg.textContent = '扫描到 ' + ids.length + ' 个模型 · 已保存在本机，可在「模型」下拉里选';
     };
     x.onerror = function () {
@@ -3579,6 +3836,7 @@
     cfg.mode = modeSel.value;
     save(K_MODE, cfg.mode);
     setStat();
+    syncProfile();
     cfgMsg.textContent = '接口已切到 ' + (MODE_NAME[cfg.mode] || '对话') + ' · ' + endpoint();
   };
   themeBtn.onclick = function (e) {
@@ -3604,6 +3862,7 @@
     cfg.base = b;
     baseIn.value = b;
     save(K_BASE, b);
+    syncProfile();
   };
   var fullBtns = [fullBtn];
   var lastFullAt = 0;
@@ -3665,6 +3924,12 @@
     photoIn.value = '';
   };
   attachUp.onclick = function () {
+    if (!cfg.gitToken) {
+      openCfg(true);
+      cfgMsg.textContent = '先在上面的「上传 Token」里填 GitLab Token，再点上传';
+      gitField.begin();
+      return;
+    }
     pendingImages.forEach(function (it) {
       if (it.dataUrl && it.state !== 'uploaded' && it.state !== 'uploading') uploadImage(it);
     });

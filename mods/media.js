@@ -2,6 +2,13 @@
 (function () {
   if (document.getElementById('__md')) { document.getElementById('__md').remove(); }
 
+  // v3.12：用自身的 script src 推 CDN/站点根，供懒加载 mods/cam.js
+  var MOD_BASE = '';
+  try {
+    var _src = (document.currentScript && document.currentScript.src) || '';
+    MOD_BASE = _src.replace(/[?#].*$/, '').replace(/\/mods\/[^\/]+$/, '');
+  } catch (e) {}
+
   function shell(title, id, onClose) {
     var d = document.createElement('div');
     if (id) d.id = id;
@@ -133,18 +140,22 @@
     s.bar.insertBefore(share, s.bar.lastChild);
     s.bar.insertBefore(save, s.bar.lastChild);
 
-    // v3.3：设置过 GitLab Token 时，显示「上传至 GitLab 仓库」
+    // v3.12：上传按钮常显；没 Token 时点了给出明确指引（以前按钮直接消失，看着像「不能上传」）
     var gitToken = '';
     try { gitToken = localStorage.getItem('fh:ai:gitToken') || ''; } catch (e) {}
     try { if (!gitToken && window.__fhAcct && window.__fhAcct.token) gitToken = window.__fhAcct.token() || ''; } catch (e) {}
-    if (gitToken.trim()) {
+    {
       var up = document.createElement('button');
       up.textContent = '⬆';
-      up.title = '上传至 GitLab media/' + mediaUserDir() + '/';
+      up.title = gitToken.trim() ? ('上传至 GitLab media/' + mediaUserDir() + '/') : '还没设置上传 Token：点这里看怎么设';
       up.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:17px;cursor:pointer';
       var upBusy = false;
       up.onclick = function () {
         if (upBusy) return;
+        if (!gitToken.trim()) {
+          alert('还没设置 GitLab 上传 Token，所以传不上去。\n\n设置方法：\n1. 打开「🤖 AI 网页」\n2. 点 ⚙ / 🔑 打开设置\n3. 在「上传 Token」里填 GitLab Token（需要 api 权限）\n\n填好后回到这里再点 ⬆ 即可。');
+          return;
+        }
         upBusy = true;
         up.textContent = '…';
         up.title = '上传中…';
@@ -153,7 +164,7 @@
           if (err) {
             up.textContent = '⚠';
             up.title = '上传失败：' + err;
-            alert('上传失败：' + err + '\n\n可到 AI 网页 → 🔑 设置里检查 GitLab Token');
+            alert('上传失败：' + err + '\n\n可到 AI 网页 → 🔑 设置里检查 GitLab Token 是否有 api 权限、文件是否超过仓库限制');
             return;
           }
           up.textContent = '✅';
@@ -202,11 +213,54 @@
         last = d;
       }, { passive: false });
     }
+    // v3.12：关闭查看器时立即停止播放并释放 blob URL
+    var blobUrls = [];
+    [].forEach.call(s.root.querySelectorAll('img,video,audio'), function (el) {
+      if (el.src && el.src.indexOf('blob:') === 0) blobUrls.push(el.src);
+    });
+    var vObs = new MutationObserver(function () {
+      if (document.body.contains(s.root)) return;
+      [].forEach.call(s.root.querySelectorAll('audio,video'), function (m) {
+        try { m.pause(); m.currentTime = 0; } catch (e) {}
+        try { m.removeAttribute('src'); m.load(); } catch (e2) {}
+      });
+      blobUrls.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) {} });
+      vObs.disconnect();
+    });
+    vObs.observe(document.body, { childList: true });
     return s;
   }
 
-  // ── 相机 ──
+  // ── 相机（v3.12：统一用 mods/cam.js，快门在右、可选分辨率、录像带声音）──
+  function openSharedCam() {
+    function go() {
+      try {
+        window.__fhCam.open({
+          title: '相机',
+          mode: 'both',
+          onPhoto: function (blob, info) {
+            view(blob, (info && info.name) || ('photo-' + Date.now() + '.jpg'));
+          },
+          onVideo: function (blob, info) {
+            view(blob, (info && info.name) || ('record-' + Date.now() + '.webm'));
+          }
+        });
+      } catch (e) {
+        alert('打不开相机：' + (e && e.message ? e.message : e));
+      }
+    }
+    if (window.__fhCam) { go(); return; }
+    var sc = document.createElement('script');
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.12';
+    sc.onload = go;
+    sc.onerror = function () { alert('相机模块加载失败（检查网络 / CDN）'); };
+    document.head.appendChild(sc);
+  }
+
   function camera() {
+    openSharedCam();
+    return;
+    /* 老实现保留作参考，v3.12 起不再执行 */
     var s = shell('相机', '__md');
     var v = document.createElement('video');
     v.autoplay = true;
@@ -492,7 +546,7 @@
   var b = btn('🖼 本地图片/视频', 'min-width:220px');
   var tip = document.createElement('div');
   tip.style.cssText = 'color:#666;font-size:12px;text-align:center;max-width:430px;line-height:1.8';
-  tip.innerHTML = '全部走网页相机：实时预览，不调系统相机 App（避免被设备策略拦掉）。<br>拍照出 PNG，录像格式取决于浏览器（你这台只有 WebM）。';
+  tip.innerHTML = '全部走网页相机：实时预览，不调系统相机 App（避免被设备策略拦掉）。<br>拍照出 JPEG，可在相机里选 4K / 2K / 1080P / 720P；录像带麦克风声音。';
   a.onclick = function () { s.root.remove(); camera(); };
   b.onclick = function () { local(); };
   wrap.append(a, b, tip);

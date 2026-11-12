@@ -1,9 +1,13 @@
-/* 聊天室（共享）v3.11 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.12 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
   var OLD = document.getElementById('__rm');
   if (OLD) { try { OLD.remove(); } catch (e) {} }
+
+  // v3.12：从自己的 script src 推出站点根，用来懒加载同目录的 cam.js
+  var SELF_SRC = (document.currentScript && document.currentScript.src) || '';
+  var MOD_BASE = SELF_SRC.split('?')[0].split('#')[0].replace(/\/mods\/[^\/]+$/, '');
 
   var GIT_HOST = 'https://gitlab.com';
   var GIT_PROJ = 'yq-group2/fuulea_ai_repository';
@@ -667,17 +671,17 @@
     '#__rm .rm-err button{flex-shrink:0;border:1px solid rgba(240,120,90,.6);border-radius:6px;',
     'background:rgba(240,90,70,.2);color:#ffc3b0;font:10.5px/1 inherit;padding:5px 9px;cursor:pointer}',
     '#__rm .rm-err button:hover{background:rgba(240,90,70,.34)}',
-    '#__rm .rm-compose{display:flex;align-items:flex-end;gap:6px;margin-top:4px}',
+    '#__rm .rm-compose{display:flex;align-items:flex-end;gap:5px;margin-top:4px}',
     '#__rm .rm-ta{flex:1;min-width:0;min-height:36px;max-height:96px;padding:8px 10px;resize:none;border:1px solid var(--line);',
     'border-radius:9px;background:#151821;color:var(--fg);font:13px/1.45 inherit;outline:none}',
     '#__rm .rm-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,126,248,.14)}',
     '#__rm .rm-ta:disabled{opacity:.55;cursor:not-allowed}',
-    '#__rm .rm-send{height:36px;min-width:58px;padding:0 12px;border:0;border-radius:9px;',
+    '#__rm .rm-send{height:36px;min-width:52px;padding:0 10px;border:0;border-radius:9px;',
     'background:linear-gradient(180deg,var(--accent),var(--accent2));color:#fff;font:12px/1 inherit;',
     'font-weight:600;cursor:pointer;flex-shrink:0}',
     '#__rm .rm-send:disabled{opacity:.45;cursor:not-allowed}',
     // v3.10 文件卡片 / 语音 / 按钮
-    '#__rm .rm-cbtn{height:36px;width:36px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.05);',
+    '#__rm .rm-cbtn{height:34px;width:34px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.05);',
     'color:#c9cede;font:13px/1 inherit;cursor:pointer;flex-shrink:0;padding:0;display:flex;align-items:center;justify-content:center}',
     '#__rm .rm-cbtn:hover{background:rgba(255,255,255,.13)}',
     '#__rm .rm-cbtn.on{background:var(--danger);color:#fff;border-color:var(--danger)}',
@@ -691,6 +695,8 @@
     '#__rm .rm-file-lb{min-width:0}',
     '#__rm .rm-file-sub{margin-top:2px;font-size:10px;color:var(--dim)}',
     '#__rm .rm-file video{display:block;max-width:100%;max-height:320px;border-radius:8px;margin-top:7px;background:#000}',
+    '#__rm .rm-file-thumb{display:block;max-width:100%;max-height:220px;border-radius:8px;margin-top:7px;background:#000}',
+    '#__rm .rm-file-thumb[data-empty]{display:none}',
     '#__rm .rm-vrow{display:flex;align-items:center;gap:8px;margin-top:7px;padding:7px 9px;border-radius:9px;',
     'background:rgba(0,0,0,.28);flex-wrap:wrap}',
     '#__rm .rm-vplay{width:30px;height:30px;border:0;border-radius:50%;background:var(--accent);color:#fff;',
@@ -771,7 +777,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.11';
+  badge.textContent = 'v3.12';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   var refreshBtn = document.createElement('button');
@@ -822,7 +828,12 @@
   micBtn.textContent = '🎤';
   micBtn.title = '语音输入（识别转文字，点击开始 / 再点停止）';
   if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) micBtn.title = '当前浏览器不支持语音识别（点击可查看原因）';
-  compose.append(micBtn, fileBtn, recBtn, ta, sendBtn);
+  // v3.12：📷 网页相机，拍完 / 录完直接发到聊天室
+  var camBtn = document.createElement('button');
+  camBtn.className = 'rm-cbtn';
+  camBtn.textContent = '📷';
+  camBtn.title = '拍照 / 录像（直接发送）';
+  compose.append(micBtn, camBtn, fileBtn, recBtn, ta, sendBtn);
   foot.append(tip, compose, fileInput);
 
   var grip = document.createElement('div');
@@ -1094,6 +1105,24 @@
     sub.textContent = nm + (durTxt && nm.indexOf(durTxt) < 0 ? ' · ' + durTxt : '') + ' · ' + fmtSize(m.size);
     card.appendChild(sub);
     card.__m = m;
+    // v3.12：图片消息直接给缩略图，不必先点开
+    if (kind === 'image') {
+      var th = document.createElement('img');
+      th.className = 'rm-file-thumb';
+      th.alt = '图片预览';
+      th.addEventListener('error', function () { th.setAttribute('data-empty', '1'); });
+      card.appendChild(th);
+      if (window.IntersectionObserver) {
+        var io = new IntersectionObserver(function (es) {
+          if (!es.length || !es[0].isIntersecting) return;
+          io.disconnect();
+          loadMedia(m, card, function (b) {
+            try { th.src = URL.createObjectURL(b); } catch (e) {}
+          });
+        }, { root: body, rootMargin: '120px' });
+        io.observe(th);
+      }
+    }
     var state = { loaded: false, url: null, blob: null };
     card.addEventListener('click', function () {
       if (state.loaded) {
@@ -1149,6 +1178,7 @@
   // 视频播放层（点击播放，不自动播放）
   var vplay = null;
   function openVideo(url, name) {
+    stopAllPlayback();   // v3.12：打开视频前先停掉正在播的语音
     if (!vplay) {
       vplay = document.createElement('div');
       vplay.className = 'rm-zoom';
@@ -1197,7 +1227,25 @@
     v.onended = null;
     // 不自动播放；等用户点播放
   }
-  function closeVideo() { if (vplay) { vplay.classList.remove('on'); var v = vplay.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } } }
+  function closeVideo() {
+    if (vplay) {
+      vplay.classList.remove('on');
+      var v = vplay.querySelector('video');
+      if (v) { try { v.pause(); v.currentTime = 0; } catch (e) {} v.removeAttribute('src'); try { v.load(); } catch (e2) {} }
+    }
+  }
+  // v3.12：关闭聊天室 / 最小化 / 播另一条前，把所有音频视频立即停掉
+  function stopAllPlayback(except) {
+    try {
+      var list = root.querySelectorAll('audio,video');
+      [].forEach.call(list, function (a) {
+        if (except && a === except) return;
+        try { a.pause(); a.currentTime = 0; } catch (e) {}
+      });
+    } catch (e) {}
+    if (!except) closeVideo();
+    try { if (window.__fhCam && window.__fhCam.isOpen && window.__fhCam.isOpen()) window.__fhCam.close(); } catch (e) {}
+  }
   // 语音：下载后出现播放条 + ▶ 点击播放 + 转文字
   function showVoice(m, state, card) {
     var prev = card.querySelector('.rm-vrow');
@@ -1225,10 +1273,22 @@
       e.stopPropagation();
       downloadBlob(state.blob || mediaBlobs[m.file], dlName(m));
     };
-    row.append(play, dur, dl, tt);
+    // v3.12：主动停止，不等播完
+    var st = document.createElement('button');
+    st.className = 'rm-vdl';
+    st.textContent = '⏹';
+    st.title = '停止播放';
+    row.append(play, dur, st, dl, tt);
     card.appendChild(row);
     var aud = document.createElement('audio');
     aud.src = state.url;
+    aud.style.display = 'none';
+    row.appendChild(aud);
+    st.onclick = function (e) {
+      e.stopPropagation();
+      try { aud.pause(); aud.currentTime = 0; } catch (e2) {}
+      play.textContent = '▶';
+    };
     aud.preload = 'metadata';
     aud.onloadedmetadata = function () {
       if (!m.dur && !isNaN(aud.duration)) dur.textContent = fmtDur(aud.duration);
@@ -1237,6 +1297,8 @@
     play.onclick = function (e) {
       e.stopPropagation();
       if (playing) { aud.pause(); play.textContent = '▶'; playing = false; return; }
+      // 同一时间只播一条：先停掉其它语音 / 视频
+      stopAllPlayback(aud);
       aud.play().then(function () { playing = true; play.textContent = '⏸'; })
         .catch(function () { tipText('播放失败', 'warn'); });
     };
@@ -1562,6 +1624,104 @@
     };
     fin(msg);
   }
+
+  // ── v3.12 网页相机：拍照 / 录像，直接发到聊天室 ──
+  var camQueue = null;
+  function loadCam(cb) {
+    if (window.__fhCam) { cb(); return; }
+    if (camQueue) { camQueue.push(cb); return; }
+    camQueue = [cb];
+    var sc = document.createElement('script');
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.12';
+    sc.onload = function () {
+      var q = camQueue || [];
+      camQueue = null;
+      q.forEach(function (f) { try { f(); } catch (e) {} });
+    };
+    sc.onerror = function () {
+      camQueue = null;
+      tipClear();
+      tipText('相机模块加载失败（检查网络 / CDN）', 'warn');
+    };
+    document.head.appendChild(sc);
+  }
+  // 上传前兜底：图片 > 8MB 降到 2560 长边 JPEG；视频守住 25MB 上限
+  function shrinkForUpload(blob, kind, cb) {
+    if (kind !== 'image') {
+      if (blob.size > 25 * 1048576) { cb('视频超过 25MB 上限（' + fmtSize(blob.size) + '）'); return; }
+      cb(null, blob);
+      return;
+    }
+    if (blob.size <= 8 * 1048576 && /jpe?g/i.test(String(blob.type || ''))) { cb(null, blob); return; }
+    var url = URL.createObjectURL(blob);
+    var im = new Image();
+    im.onload = function () {
+      var max = 2560;
+      var w = im.naturalWidth, h = im.naturalHeight;
+      var sc = Math.min(1, max / Math.max(w, h));
+      var cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+      var cv = document.createElement('canvas');
+      cv.width = cw; cv.height = ch;
+      var ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(im, 0, 0, cw, ch);
+      try { URL.revokeObjectURL(url); } catch (e) {}
+      cv.toBlob(function (b) { cb(null, b || blob); }, 'image/jpeg', 0.86);
+    };
+    im.onerror = function () { try { URL.revokeObjectURL(url); } catch (e) {} cb('照片解码失败'); };
+    im.src = url;
+  }
+  function sendCamBlob(blob, info, kind) {
+    if (!canSend()) {
+      updateAuth(); tipClear();
+      tipText('登录并配置 Token 后才能发照片 / 视频（拍到的还留在相机里，可先保存）', 'warn');
+      return;
+    }
+    info = info || {};
+    tipClear();
+    tipText(kind === 'image' ? '正在发送照片…' : '正在发送视频…');
+    shrinkForUpload(blob, kind, function (err, out) {
+      if (err) { tipText(err, 'warn'); return; }
+      if (out.size > 25 * 1048576) { tipText('文件超过 25MB 上限（' + fmtSize(out.size) + '）', 'warn'); return; }
+      uploadBlob(out, info.name || (kind === 'image' ? 'photo.jpg' : 'record.webm'), function (e, path) {
+        if (e) {
+          tipClear();
+          tipText((kind === 'image' ? '照片' : '视频') + '上传失败：' + e + '（可重拍或换小一点的分辨率）', 'warn');
+          return;
+        }
+        postMediaMsg({
+          at: Date.now(), nick: myName(), owner: ownerTag(), text: '', image: '',
+          file: path, kind: kind, name: info.name || path.split('/').pop(),
+          size: out.size, mime: out.type || (kind === 'image' ? 'image/jpeg' : 'video/webm'),
+          dur: kind === 'video' ? (info.dur || 0) : 0
+        });
+        tipClear();
+        tipText(kind === 'image' ? '照片已发送' : '视频已发送', 'ok');
+      });
+    });
+  }
+  function openRoomCam() {
+    if (!canSend()) {
+      updateAuth(); tipClear();
+      tipText('登录并配置 Token 后才能用相机发送', 'warn');
+      return;
+    }
+    loadCam(function () {
+      try {
+        window.__fhCam.open({
+          title: '拍照 / 录像',
+          mode: 'both',
+          onPhoto: function (b, info) { sendCamBlob(b, info, 'image'); },
+          onVideo: function (b, info) { sendCamBlob(b, info, 'video'); }
+        });
+      } catch (e) {
+        tipClear();
+        tipText('打不开相机：' + (e && e.message ? e.message : e), 'warn');
+      }
+    });
+  }
+  camBtn.onclick = openRoomCam;
 
   // ── v3.10 文件 / 语音 / 语音输入 ──
   var pendingFiles = [];
@@ -1900,9 +2060,9 @@
   function hide() {
     stopPoll();
     zhide();
-    closeVideo();
+    // v3.12：关闭 / 最小化时立即停止所有播放（含语音）并收起相机
+    stopAllPlayback();
     if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srReset(); }
-    abortRec();
     abortRec();
     if (full) setFull(false);
     saveRect();

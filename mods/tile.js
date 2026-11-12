@@ -181,8 +181,8 @@
 
     var bar = document.createElement('div');
     bar.style.cssText = 'position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;' +
-      'justify-content:center;gap:26px;' +
-      'padding:14px 16px calc(18px + env(safe-area-inset-bottom,0px));' +
+      'justify-content:flex-end;gap:24px;' +
+      'padding:16px 24px calc(20px + env(safe-area-inset-bottom,0px));' +
       'background:linear-gradient(transparent,rgba(0,0,0,.78))';
 
     function circle(t, size) {
@@ -195,7 +195,11 @@
     }
 
     var flip = circle('🔄', 52);
+    flip.style.marginRight = 'auto';
     var quit = circle('✕', 52);
+    // v3.12：关闭键挪到右上，快门在右下
+    quit.style.cssText += ';position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:12px;' +
+      'z-index:5;width:44px;height:44px;font-size:17px';
 
     var snap = document.createElement('button');
     snap.textContent = '拍照';
@@ -205,8 +209,8 @@
       'font:700 15px/1 -apple-system,"PingFang SC",sans-serif;cursor:pointer;' +
       'box-shadow:0 4px 18px rgba(0,0,0,.5)';
 
-    bar.append(flip, snap, quit);
-    w.append(v, top, bar, msg);
+    bar.append(flip, snap);
+    w.append(v, top, bar, msg, quit);
     document.body.append(w);
     camWrap = w;
 

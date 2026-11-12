@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.11';
+  var TAG = '3.12';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -1093,6 +1093,31 @@
     token: function () { var r = acctCur(); return r ? String(r.gitToken || '') : ''; }
   };
 
+  // v3.12：供 mods 主动把配置推到云端（多 AI 配置存云端后自动同步）
+  // 云端文件就是「⬆ 上传配置」那份加密快照，cfgCollect 会自动带上 fh:ai:profiles
+  window.__fhCfg = {
+    ready: function () {
+      return !!(cfgReady() && cfgTokenLocal() && cfgPinGet());
+    },
+    can: function () { return !!(cfgReady() && cfgTokenLocal()); },
+    pin: function () { return cfgPinGet(); },
+    push: function (cb) {
+      var done = typeof cb === 'function' ? cb : function () {};
+      if (!cfgReady()) { done({ ok: false, msg: '浏览器不支持加密（需要 https/localhost）' }); return; }
+      var tok = cfgTokenLocal();
+      if (!tok) { done({ ok: false, msg: '未配置 GitLab Token，无法上传云端' }); return; }
+      var pin = cfgPinGet();
+      if (!pin) { pin = cfgPinNew(); cfgPinSet(pin); }
+      cfgUpload(pin, !cfgLs(CFG_ID_KEY), tok, function () {}).then(function (r) {
+        done(r && r.ok ? { ok: true, id: r.id, n: r.n } : {
+          ok: false, status: r && r.status, msg: (r && r.text) || ('HTTP ' + (r && r.status))
+        });
+      }).catch(function (e) {
+        done({ ok: false, msg: String(e && e.message ? e.message : e) });
+      });
+    }
+  };
+
   // v3.8：聊天室拆成独立模块 mods/room.js，不再借 AI 网页的窗口
   function openChatRoom(btn) {
     if (window.__fhRoom) { try { window.__fhRoom(); return; } catch (e) {} }
@@ -1132,7 +1157,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.11', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.12', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
