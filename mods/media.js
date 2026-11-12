@@ -375,7 +375,10 @@
         s.body.append(tip);
       }, 8000);
 
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: f }, audio: false })
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: f, width: { ideal: 4096 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } },
+        audio: false
+      })
         .then(function (st) {
           settled = true;
           clearTimeout(guard);
@@ -424,7 +427,9 @@
       chunks = [];
       mime = pickMime();
       try {
-        recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        recorder = new MediaRecorder(stream, mime ? {
+          mimeType: mime, videoBitsPerSecond: 12000000, audioBitsPerSecond: 128000
+        } : { videoBitsPerSecond: 12000000, audioBitsPerSecond: 128000 });
       } catch (e) { return alert('录像失败：' + e.message); }
       recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
       recorder.onstop = function () {

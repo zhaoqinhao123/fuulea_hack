@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.9 — 独立于 AI 网页的浮窗；消息存 GitLab message/ */
+/* 聊天室（共享）v3.10 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -9,6 +9,7 @@
   var GIT_PROJ = 'yq-group2/fuulea_ai_repository';
   var GIT_BRANCH = 'main';
   var ROOM_DIR = 'message';
+  var MEDIA_DIR = 'media';
   var POLL = 30000;
   var K_CACHE = 'fh:room:cache';
   var K_RECT = 'fh:ai:roomRect';
@@ -42,6 +43,36 @@
   }
   function myName() { var r = acct(); return r && r.user ? String(r.user) : ''; }
   function canSend() { return !!(acct() && token()); }
+  function mediaUserDir() {
+    var r = acct();
+    var u = r && r.user ? String(r.user) : '';
+    u = String(u).replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+|\.+$/g, '').slice(0, 40);
+    return u || 'guest';
+  }
+  function mediaExt(name) {
+    var n = String(name || '').toLowerCase();
+    var i = n.lastIndexOf('.');
+    if (i > 0 && n.length - i <= 6) return n.slice(i);
+    return '';
+  }
+  function mediaType(ext, mime) {
+    var m = String(mime || '').toLowerCase();
+    if (m.indexOf('video/') === 0) return 'video';
+    if (m.indexOf('audio/') === 0) return 'voice';
+    if (/^image\//.test(m)) return 'image';
+    if (/\.(mp4|webm|mov|m4v|avi|mkv|3gp)$/i.test(ext)) return 'video';
+    if (/\.(mp3|wav|m4a|aac|ogg|webm|opus|amr)$/i.test(ext)) return 'voice';
+    if (/\.(jpe?g|png|gif|webp|bmp|svg|heic|heif)$/i.test(ext)) return 'image';
+    return 'file';
+  }
+  function mediaName(m) {
+    var p = m.file;
+    var i = p.lastIndexOf('/');
+    return i >= 0 ? p.slice(i + 1) : p;
+  }
+  function kindLabel(k) {
+    return k === 'image' ? '图片' : k === 'video' ? '视频' : k === 'voice' ? '语音消息' : '文件';
+  }
 
   function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
   function stamp() {
@@ -68,19 +99,22 @@
     return GIT_HOST + '/api/v4/projects/' + encodeURIComponent(GIT_PROJ) + '/repository/tree' +
       '?ref=' + encodeURIComponent(GIT_BRANCH) + '&per_page=100&path=' + encodeURIComponent(p);
   }
-  function gitReq(method, url, body) {
+  function gitReq(method, url, body, binary) {
     return new Promise(function (resolve) {
       var x = new XMLHttpRequest();
       try { x.open(method, url, true); } catch (e) { resolve({ ok: false, status: 0, text: String(e) }); return; }
       x.setRequestHeader('PRIVATE-TOKEN', token());
-      if (body != null) x.setRequestHeader('Content-Type', 'application/json');
+      if (body != null) {
+        if (!binary) x.setRequestHeader('Content-Type', 'application/json');
+        else x.responseType = 'blob';
+      }
       x.timeout = 45000;
       x.onload = function () {
-        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: x.responseText || '' });
+        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: x.responseText || '', blob: x.response || null });
       };
-      x.onerror = function () { resolve({ ok: false, status: 0, text: '' }); };
-      x.ontimeout = function () { resolve({ ok: false, status: 0, text: 'timeout' }); };
-      try { x.send(body == null ? null : body); } catch (e) { resolve({ ok: false, status: 0, text: String(e) }); }
+      x.onerror = function () { resolve({ ok: false, status: 0, text: '', blob: null }); };
+      x.ontimeout = function () { resolve({ ok: false, status: 0, text: 'timeout', blob: null }); };
+      try { x.send(body == null ? null : body); } catch (e) { resolve({ ok: false, status: 0, text: String(e), blob: null }); }
     });
   }
   function b64utf8(s) {
@@ -113,6 +147,62 @@
     });
     return gitReq('POST', fileUrl(p), body);
   }
+  function gitGetBlob(p) {
+    return gitReq('GET', fileUrl(p, true), null, true).then(function (r) {
+      return r.ok && r.blob ? r.blob : null;
+    });
+  }
+  // v3.10 媒体上传：blob → base64 → POST GitLab（media/<用户名>/...）
+  function blobToDataURL(blob) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result || '')); };
+      r.onerror = function () { reject(new Error('文件读取失败')); };
+      r.readAsDataURL(blob);
+    });
+  }
+  function mediaNewPath(ext) {
+    return MEDIA_DIR + '/' + mediaUserDir() + '/' + stamp() + '-' + rand4() + (ext || '.jpg');
+  }
+  function uploadBlob(blob, name, cb) {
+    var ext = mediaExt(name);
+    var path = mediaNewPath(ext || mediaExt(blob.name) || (String(blob.type || '').indexOf('video/') === 0 ? '.mp4' : '.jpg'));
+    blobToDataURL(blob).then(function (dataUrl) {
+      var b64 = String(dataUrl).split(',')[1] || '';
+      if (!b64) return cb('读取文件失败');
+      var body = JSON.stringify({
+        branch: GIT_BRANCH, content: b64, encoding: 'base64',
+        commit_message: 'upload media ' + path.replace(/^media\//, '')
+      });
+      gitReq('POST', fileUrl(path), body).then(function (res) {
+        if (res.ok) return cb(null, path);
+        if (res.status === 400 && /already exists/i.test(res.text || '')) {
+          var p2 = mediaNewPath(ext || mediaExt(blob.name) || '.jpg');
+          uploadBlobPath(blob, name, p2, cb);
+          return;
+        }
+        var detail = '';
+        try { var j = JSON.parse(res.text || '{}'); detail = j.message || ''; } catch (e) {}
+        cb('HTTP ' + res.status + (detail ? ' ' + detail : ''));
+      });
+    }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+  }
+  function uploadBlobPath(blob, name, path, cb) {
+    blobToDataURL(blob).then(function (dataUrl) {
+      var b64 = String(dataUrl).split(',')[1] || '';
+      if (!b64) return cb('读取文件失败');
+      var body = JSON.stringify({
+        branch: GIT_BRANCH, content: b64, encoding: 'base64',
+        commit_message: 'upload media ' + path.replace(/^media\//, '')
+      });
+      gitReq('POST', fileUrl(path), body).then(function (res) {
+        if (res.ok) return cb(null, path);
+        var detail = '';
+        try { var j = JSON.parse(res.text || '{}'); detail = j.message || ''; } catch (e) {}
+        cb('HTTP ' + res.status + (detail ? ' ' + detail : ''));
+      });
+    }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+  }
 
   // ── 缓存 / 消息 ──
   var msgs = [];
@@ -123,11 +213,20 @@
     try { arr = JSON.parse(raw); } catch (e) {}
     if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
     msgs = arr.filter(function (m) {
-      return m && typeof m === 'object' && (m.text || m.image) && m.p;
+      return m && typeof m === 'object' && (m.text || m.image || m.file) && m.p;
     }).map(function (m) {
+      var kind = String(m.kind || '');
+      if (!kind) {
+        var ext = mediaExt(String(m.file || m.image || ''));
+        kind = mediaType(ext, String(m.mime || ''));
+      }
       return {
         p: String(m.p), at: Number(m.at) || 0, nick: String(m.nick || '匿名'),
-        owner: String(m.owner || ''), text: String(m.text || ''), image: String(m.image || '')
+        owner: String(m.owner || ''), text: String(m.text || ''), image: String(m.image || ''),
+        file: String(m.file || ''), kind: kind,
+        mime: String(m.mime || ''), name: String(m.name || ''),
+        size: Number(m.size) || 0, dur: Number(m.dur) || 0,
+        transcript: m.transcript == null ? undefined : String(m.transcript)
       };
     }).slice(-200);
     msgs.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
@@ -150,10 +249,21 @@
     if (!j || typeof j !== 'object') return null;
     var t = String(j.text == null ? '' : j.text).slice(0, 8000);
     var img = String(j.image == null ? '' : j.image);
-    if (!t && !img) return null;
+    var file = String(j.file == null ? '' : j.file);
+    var kind = String(j.kind == null ? '' : j.kind);
+    if (!t && !img && !file) return null;
+    if (!kind) {
+      var ext = mediaExt(file || img);
+      kind = mediaType(ext, String(j.mime || ''));
+    }
     return {
       p: path, at: Number(j.at) || Date.now(), nick: String(j.nick || '匿名').slice(0, 30),
-      owner: String(j.owner || ''), text: t, image: img
+      owner: String(j.owner || ''), text: t, image: img,
+      file: file, kind: kind,
+      mime: String(j.mime == null ? '' : j.mime),
+      name: String(j.name == null ? '' : j.name),
+      size: Number(j.size) || 0, dur: Number(j.dur) || 0,
+      transcript: j.transcript == null ? undefined : String(j.transcript)
     };
   }
   function fetchPaths(paths) {
@@ -496,6 +606,33 @@
     'background:linear-gradient(180deg,var(--accent),var(--accent2));color:#fff;font:12px/1 inherit;',
     'font-weight:600;cursor:pointer;flex-shrink:0}',
     '#__rm .rm-send:disabled{opacity:.45;cursor:not-allowed}',
+    // v3.10 文件卡片 / 语音 / 按钮
+    '#__rm .rm-cbtn{height:36px;width:36px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.05);',
+    'color:#c9cede;font:13px/1 inherit;cursor:pointer;flex-shrink:0;padding:0;display:flex;align-items:center;justify-content:center}',
+    '#__rm .rm-cbtn:hover{background:rgba(255,255,255,.13)}',
+    '#__rm .rm-cbtn.on{background:var(--danger);color:#fff;border-color:var(--danger)}',
+    '#__rm .rm-cbtn[hidden]{display:none}',
+    '#__rm .rm-file{display:block;margin-top:6px;padding:8px 10px;border:1px dashed rgba(120,160,255,.4);',
+    'border-radius:9px;background:rgba(77,126,248,.08);cursor:pointer;max-width:100%}',
+    '#__rm .rm-file:hover{border-color:rgba(120,160,255,.75);background:rgba(77,126,248,.16)}',
+    '#__rm .rm-file.loading{opacity:.6;pointer-events:none}',
+    '#__rm .rm-file-top{display:flex;align-items:center;gap:7px;font-size:12px;color:#a9c3ff}',
+    '#__rm .rm-file-ic{font-size:16px;flex-shrink:0}',
+    '#__rm .rm-file-lb{min-width:0}',
+    '#__rm .rm-file-sub{margin-top:2px;font-size:10px;color:var(--dim)}',
+    '#__rm .rm-file video{display:block;max-width:100%;max-height:320px;border-radius:8px;margin-top:7px;background:#000}',
+    '#__rm .rm-vrow{display:flex;align-items:center;gap:8px;margin-top:7px;padding:7px 9px;border-radius:9px;',
+    'background:rgba(0,0,0,.28);flex-wrap:wrap}',
+    '#__rm .rm-vplay{width:30px;height:30px;border:0;border-radius:50%;background:var(--accent);color:#fff;',
+    'font:12px/1 inherit;cursor:pointer;flex-shrink:0;padding:0}',
+    '#__rm .rm-vplay:hover{background:var(--accent2)}',
+    '#__rm .rm-vdur{font:10.5px/1 ui-monospace,monospace;color:var(--dim);flex-shrink:0;min-width:34px}',
+    '#__rm .rm-vtt{height:28px;padding:0 10px;border:1px solid rgba(120,160,255,.45);border-radius:7px;',
+    'background:rgba(77,126,248,.14);color:#a9c3ff;font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
+    '#__rm .rm-vtt:hover{background:rgba(77,126,248,.26)}',
+    '#__rm .rm-file-trans{margin-top:7px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.28);',
+    'font-size:12px;line-height:1.6;color:#d8dcea;white-space:pre-wrap;word-break:break-word}',
+    '#__rm .rm-file-trans .none{color:var(--dim)}',
     '#__rm .rm-grip{position:absolute;right:1px;bottom:1px;width:22px;height:22px;z-index:12;cursor:se-resize;',
     'touch-action:none;opacity:.7;border-radius:0 0 12px 0;',
     'background:linear-gradient(135deg,transparent 42%,var(--line) 42%,var(--line) 50%,transparent 50%,transparent 62%,var(--line) 62%,var(--line) 70%,transparent 70%)}',
@@ -559,7 +696,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.9';
+  badge.textContent = 'v3.10';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   var refreshBtn = document.createElement('button');
@@ -591,8 +728,27 @@
   var sendBtn = document.createElement('button');
   sendBtn.className = 'rm-send';
   sendBtn.textContent = '发送';
-  compose.append(ta, sendBtn);
-  foot.append(tip, compose);
+  // v3.10：📎 文件 / 🎙️ 录音 / 🎤 语音输入
+  var fileBtn = document.createElement('button');
+  fileBtn.className = 'rm-cbtn';
+  fileBtn.textContent = '📎';
+  fileBtn.title = '发图片 / 视频';
+  var fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = 'image/*,video/*';
+  fileInput.multiple = true;
+  fileInput.style.display = 'none';
+  var recBtn = document.createElement('button');
+  recBtn.className = 'rm-cbtn';
+  recBtn.textContent = '🎙️';
+  recBtn.title = '录语音消息（点开始 / 再点停止）';
+  var micBtn = document.createElement('button');
+  micBtn.className = 'rm-cbtn';
+  micBtn.textContent = '🎤';
+  micBtn.title = '语音输入（识别转文字）';
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) micBtn.hidden = true;
+  compose.append(micBtn, fileBtn, recBtn, ta, sendBtn);
+  foot.append(tip, compose, fileInput);
 
   var grip = document.createElement('div');
   grip.className = 'rm-grip';
@@ -821,6 +977,180 @@
     });
   }
 
+  // ── v3.10 文件卡片：图片/视频/语音 不自动下载，点击才拉取 ──
+  var mediaCache = {};
+  function mediaCard(m) {
+    var kind = m.kind || mediaType(mediaExt(m.file), m.mime);
+    var card = document.createElement('div');
+    card.className = 'rm-file';
+    card.title = '点击下载查看';
+    var top = document.createElement('div');
+    top.className = 'rm-file-top';
+    var ic = document.createElement('span');
+    ic.className = 'rm-file-ic';
+    ic.textContent = kind === 'image' ? '🖼️' : kind === 'video' ? '🎞️' : kind === 'voice' ? '🎙️' : '📎';
+    var lb = document.createElement('span');
+    lb.className = 'rm-file-lb';
+    lb.textContent = '该文件为' + kindLabel(kind) + '，点击可下载查看';
+    top.append(ic, lb);
+    card.appendChild(top);
+    var sub = document.createElement('div');
+    sub.className = 'rm-file-sub';
+    var nm = mediaName(m);
+    sub.textContent = nm + (m.dur ? ' · ' + fmtDur(m.dur) : '') + ' · ' + fmtSize(m.size);
+    card.appendChild(sub);
+    card.__m = m;
+    var state = { loaded: false, url: null, blob: null };
+    card.addEventListener('click', function () {
+      if (state.loaded) {
+        previewMedia(m, state.url);
+        return;
+      }
+      card.classList.add('loading');
+      gitGetBlob(m.file).then(function (b) {
+        card.classList.remove('loading');
+        if (!b) { tipText('文件下载失败', 'warn'); return; }
+        state.blob = b;
+        state.url = URL.createObjectURL(b);
+        state.loaded = true;
+        if (kind === 'voice') {
+          showVoice(m, state, card);
+        } else {
+          previewMedia(m, state.url);
+        }
+      });
+    });
+    return card;
+  }
+  function fmtDur(s) { s = Number(s) || 0; return Math.floor(s / 60) + ':' + pad2(Math.floor(s % 60)); }
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    return n + ' B';
+  }
+  function previewMedia(m, url) {
+    var kind = m.kind || mediaType(mediaExt(m.file), m.mime);
+    if (kind === 'image') { zopen(url, mediaName(m)); return; }
+    if (kind === 'video') { openVideo(url, mediaName(m)); return; }
+    if (kind === 'voice') { playVoice(m, url); return; }
+    // 其他文件 → 下载
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = mediaName(m);
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { try { a.remove(); } catch (e) {} }, 100);
+  }
+  // 视频播放层（点击播放，不自动播放）
+  var vplay = null;
+  function openVideo(url, name) {
+    if (!vplay) {
+      vplay = document.createElement('div');
+      vplay.className = 'rm-zoom';
+      var bar = document.createElement('div');
+      bar.className = 'zbar';
+      var tit = document.createElement('div');
+      tit.className = 'ztit';
+      var cl = document.createElement('button');
+      cl.textContent = '✕';
+      cl.onclick = closeVideo;
+      bar.append(tit, cl);
+      var vd = document.createElement('video');
+      vd.controls = true;
+      vd.playsInline = true;
+      vd.preload = 'metadata';
+      vd.style.maxWidth = '100%';
+      vd.style.maxHeight = '100%';
+      vd.style.outline = 'none';
+      var stage = document.createElement('div');
+      stage.className = 'zstage';
+      stage.style.cursor = 'default';
+      stage.append(vd);
+      vplay.append(bar, stage);
+      win.append(vplay);
+    }
+    var v = vplay.querySelector('video');
+    v.src = url;
+    vplay.querySelector('.ztit').textContent = name || '视频';
+    vplay.classList.add('on');
+    v.onended = null;
+    // 不自动播放；等用户点播放
+  }
+  function closeVideo() { if (vplay) { vplay.classList.remove('on'); var v = vplay.querySelector('video'); if (v) { v.pause(); v.removeAttribute('src'); v.load(); } } }
+  // 语音：下载后出现播放条 + ▶ 点击播放 + 转文字
+  function showVoice(m, state, card) {
+    var prev = card.querySelector('.rm-vrow');
+    if (prev) prev.remove();
+    var row = document.createElement('div');
+    row.className = 'rm-vrow';
+    var play = document.createElement('button');
+    play.className = 'rm-vplay';
+    play.textContent = '▶';
+    var dur = document.createElement('span');
+    dur.className = 'rm-vdur';
+    dur.textContent = m.dur ? fmtDur(m.dur) : '0:00';
+    var tt = document.createElement('button');
+    tt.className = 'rm-vtt';
+    tt.textContent = '转文字';
+    tt.onclick = function (e) {
+      e.stopPropagation();
+      showTranscript(m, card);
+    };
+    row.append(play, dur, tt);
+    card.appendChild(row);
+    var aud = document.createElement('audio');
+    aud.src = state.url;
+    aud.preload = 'metadata';
+    aud.onloadedmetadata = function () {
+      if (!m.dur && !isNaN(aud.duration)) dur.textContent = fmtDur(aud.duration);
+    };
+    var playing = false;
+    play.onclick = function (e) {
+      e.stopPropagation();
+      if (playing) { aud.pause(); play.textContent = '▶'; playing = false; return; }
+      aud.play().then(function () { playing = true; play.textContent = '⏸'; })
+        .catch(function () { tipText('播放失败', 'warn'); });
+    };
+    aud.onended = function () { playing = false; play.textContent = '▶'; };
+    aud.onpause = function () { playing = false; play.textContent = '▶'; };
+    aud.onerror = function () { tipText('语音播放失败', 'warn'); };
+  }
+  function playVoice(m, url) {
+    // 已下载过的语音：直接播放
+    var card = null;
+    var lines = body.querySelectorAll('.rm-file');
+    [].forEach.call(lines, function (c) {
+      if (c.__m && c.__m.p === m.p) card = c;
+    });
+    if (card) {
+      var row = card.querySelector('.rm-vrow');
+      if (!row) showVoice(m, { url: url, loaded: true }, card);
+      else {
+        var p = row.querySelector('.rm-vplay');
+        var aud = card.querySelector('audio');
+        if (p && aud) { aud.play(); p.textContent = '⏸'; }
+      }
+    }
+  }
+  function showTranscript(m, card) {
+    if (card.__tr) { card.__tr.remove(); card.__tr = null; return; }
+    var div = document.createElement('div');
+    div.className = 'rm-file-trans';
+    if (m.transcript) {
+      div.textContent = '📝 ' + m.transcript;
+    } else if (m.transcript === '') {
+      var n = document.createElement('span');
+      n.className = 'none';
+      n.textContent = '该语音未生成文字（发送端浏览器不支持语音识别）';
+      div.appendChild(n);
+    } else {
+      div.textContent = '📝 转文字中…';
+    }
+    card.appendChild(div);
+    card.__tr = div;
+  }
+
   // ── 渲染 ──
   function bubbleFor(m) {
     var line = document.createElement('div');
@@ -850,6 +1180,10 @@
         }
       };
       bub.appendChild(im);
+    }
+    // v3.10 文件消息：图片/视频/语音，不自动下载，点击后才下载/预览
+    if (m.file) {
+      bub.appendChild(mediaCard(m));
     }
     var tm = document.createElement('div');
     tm.className = 'rm-time';
@@ -1000,7 +1334,7 @@
   function send() {
     if (busySend) return;
     var text = ta.value.trim();
-    if (!text) { ta.focus(); return; }
+    if (!text && !pendingFiles.length) { ta.focus(); return; }
     if (!canSend()) {
       updateAuth();
       tipClear();
@@ -1011,37 +1345,306 @@
     sendBtn.disabled = true;
     sendBtn.textContent = '…';
     var r = acct();
+    var fin = function (msg) {
+      var path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
+      gitPut(path, JSON.stringify(msg)).then(function (res) {
+        if (!res.ok && res.status === 400 && /already exists/i.test(res.text || '')) {
+          path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
+          return gitPut(path, JSON.stringify(msg));
+        }
+        return res;
+      }).then(function (res) {
+        busySend = false;
+        sendBtn.disabled = false;
+        sendBtn.textContent = '发送';
+        if (!res.ok) {
+          var why = res.status === 401 || res.status === 403 ? 'Token 没有写权限' : ('HTTP ' + res.status);
+          tipClear();
+          tipText('发送失败：' + why + '（消息没发出去）', 'warn');
+          updateAuth();
+          return;
+        }
+        ta.value = '';
+        ta.style.height = 'auto';
+        var full = {};
+        for (var k in msg) full[k] = msg[k];
+        full.p = path;
+        merge([full]);
+        saveCache();
+        render(true);
+        updateAuth();
+      });
+    };
+    if (pendingFiles.length) {
+      var files = pendingFiles;
+      pendingFiles = [];
+      tipClear();
+      tipText('正在上传 ' + files.length + ' 个文件…');
+      uploadFiles(files, function (errs, ups) {
+        if (errs && errs.length) {
+          errs.forEach(function (x) { tipText('上传失败：' + x.err, 'warn'); });
+          busySend = false;
+          sendBtn.disabled = false;
+          sendBtn.textContent = '发送';
+          return;
+        }
+        var msg = {
+          at: Date.now(), nick: r.user, owner: ownerTag(), text: text, image: '',
+          file: ups[0].file, kind: ups[0].kind, name: ups[0].name, size: ups[0].size, mime: ups[0].mime
+        };
+        tipClear();
+        tipText('文件已上传，正在发送消息…');
+        fin(msg);
+      });
+      return;
+    }
     var msg = {
       at: Date.now(), nick: r.user, owner: ownerTag(), text: text, image: ''
     };
+    fin(msg);
+  }
+
+  // ── v3.10 文件 / 语音 / 语音输入 ──
+  var pendingFiles = [];
+  fileBtn.onclick = function () { if (canSend()) fileInput.click(); else { updateAuth(); tipClear(); tipText('登录并配置 Token 后才能发文件', 'warn'); } };
+  fileInput.onchange = function () {
+    var files = fileInput.files ? [].slice.call(fileInput.files) : [];
+    fileInput.value = '';
+    if (!files.length) return;
+    pendingFiles = files.slice(0, 9);
+    tipClear();
+    tipText('已选 ' + pendingFiles.length + ' 个文件，点击"发送"上传', 'ok');
+  };
+
+  function fmtMediaSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    return n + ' B';
+  }
+  function compressImageFile(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var im = new Image();
+      im.onload = function () {
+        var max = 2048;
+        var w = im.naturalWidth, h = im.naturalHeight;
+        var sc = 1;
+        if (w > max || h > max) sc = Math.min(max / w, max / h);
+        var cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+        var cv = document.createElement('canvas');
+        cv.width = cw; cv.height = ch;
+        var ctx = cv.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.drawImage(im, 0, 0, cw, ch);
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        cv.toBlob(function (b) { resolve(b || file); }, 'image/jpeg', 0.85);
+      };
+      im.onerror = function () { try { URL.revokeObjectURL(url); } catch (e) {} reject(new Error('图片解码失败')); };
+      im.src = url;
+    });
+  }
+  function uploadFiles(list, done) {
+    var i = 0, out = [];
+    function next() {
+      if (i >= list.length) { done(null, out); return; }
+      var f = list[i++];
+      var isImg = /^image\//.test(String(f.type || ''));
+      var prep = isImg ? compressImageFile(f) : Promise.resolve(f);
+      prep.then(function (b) {
+        if (!isImg && b.size > 25 * 1048576) { out.push({ err: '视频超过 25MB 上限：' + f.name }); next(); return; }
+        uploadBlob(b, f.name || ('file' + mediaExt(b.type)), function (e, path) {
+          if (e) { out.push({ err: f.name + '：' + e }); next(); return; }
+          out.push({ file: path, name: f.name || path.split('/').pop(), size: b.size, mime: b.type, kind: isImg ? 'image' : 'video' });
+          next();
+        });
+      }).catch(function (e) { out.push({ err: f.name + '：' + (e && e.message ? e.message : e) }); next(); });
+    }
+    next();
+  }
+
+  // 语音录音：MediaRecorder → webm → 上传；停止后立即 SpeechRecognition 转文字存 transcript
+  var recState = null;
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function recToggle() {
+    if (!canSend()) { updateAuth(); tipClear(); tipText('登录并配置 Token 后才能录音', 'warn'); return; }
+    if (recState) { stopRec(); return; }
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      tipClear(); tipText('当前浏览器不支持录音', 'warn'); return;
+    }
+    tipClear();
+    tipText('录音中…（再点 🎙️ 停止并发送）', 'warn');
+    recBtn.classList.add('on');
+    recBtn.textContent = '⏺';
+    var chunks = [];
+    var mr = null;
+    var stream = null;
+    var stopped = false;
+    var rec = { start: Date.now(), chunks: chunks };
+    recState = rec;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      if (!recState || recState !== rec) { try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} return; }
+      stream = s;
+      var mime = null;
+      ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].forEach(function (m2) {
+        if (!mime && window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m2)) mime = m2;
+      });
+      try { mr = new MediaRecorder(s, mime ? { mimeType: mime } : undefined); } catch (e) {
+        tipClear(); tipText('录音初始化失败', 'warn'); recBtn.classList.remove('on'); recBtn.textContent = '🎙️'; recState = null;
+        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        return;
+      }
+      rec.mr = mr;
+      mr.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      mr.onstop = function () {
+        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        var b = new Blob(chunks, { type: mime || 'audio/webm' });
+        recState = null;
+        recBtn.classList.remove('on');
+        recBtn.textContent = '🎙️';
+        if (rec.cancelled) { tipClear(); return; }
+        if (!b.size) { tipClear(); tipText('录音为空，未发送', 'warn'); return; }
+        var dur = Math.round((Date.now() - rec.start) / 1000);
+        tipClear();
+        tipText('正在上传语音…');
+        uploadBlob(b, 'voice-' + stamp() + '.webm', function (e, path) {
+          if (e) { tipClear(); tipText('语音上传失败：' + e, 'warn'); return; }
+          var msg = {
+            at: Date.now(), nick: acct().user, owner: ownerTag(), text: '', image: '',
+            file: path, kind: 'voice', name: '语音消息 ' + fmtDur(dur), size: b.size, mime: b.type, dur: dur
+          };
+          if (SR) {
+            tipClear();
+            tipText('正在识别转文字…');
+            recognizeTranscript(function (txt) {
+              msg.transcript = txt == null ? '' : txt;
+              postMediaMsg(msg);
+            });
+          } else {
+            msg.transcript = '';
+            postMediaMsg(msg);
+          }
+        });
+      };
+      mr.onerror = function () {
+        tipClear(); tipText('录音出错', 'warn');
+        recState = null;
+        recBtn.classList.remove('on');
+        recBtn.textContent = '🎙️';
+        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      };
+      mr.start(200);
+    }).catch(function () {
+      if (!recState || recState !== rec) return;
+      recState = null;
+      recBtn.classList.remove('on');
+      recBtn.textContent = '🎙️';
+      tipClear(); tipText('无法访问麦克风', 'warn');
+    });
+  }
+  function stopRec() {
+    if (!recState) return;
+    if (recState.mr) { try { recState.mr.stop(); } catch (e) {} }
+    else {
+      // 录音还没就绪（getUserMedia 未完成）就被点停止 → 直接取消
+      recState.cancelled = true;
+      recState = null;
+      recBtn.classList.remove('on');
+      recBtn.textContent = '🎙️';
+      tipClear();
+    }
+  }
+  // hide() 时中止录音（不算取消发送，直接停止）
+  function abortRec() {
+    if (!recState) return;
+    recState.cancelled = true;
+    if (recState.mr) { try { recState.mr.stop(); } catch (e) {} }
+    recState = null;
+    recBtn.classList.remove('on');
+    recBtn.textContent = '🎙️';
+  }
+  function recognizeTranscript(cb) {
+    if (!SR) { cb(null); return; }
+    var r = new SR();
+    r.lang = 'zh-CN';
+    r.interimResults = false;
+    r.continuous = false;
+    var done = false;
+    var finish = function (txt) { if (done) return; done = true; try { r.abort(); } catch (e) {} cb(txt); };
+    r.onresult = function (e) {
+      var t = '';
+      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      finish(t.trim());
+    };
+    r.onerror = function () { finish(null); };
+    r.onend = function () { finish(null); };
+    try { r.start(); } catch (e) { finish(null); }
+    setTimeout(function () { finish(null); }, 15000);
+  }
+  function postMediaMsg(msg) {
     var path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
+    msg.p = path;
     gitPut(path, JSON.stringify(msg)).then(function (res) {
       if (!res.ok && res.status === 400 && /already exists/i.test(res.text || '')) {
         path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
+        msg.p = path;
         return gitPut(path, JSON.stringify(msg));
       }
       return res;
     }).then(function (res) {
-      busySend = false;
-      sendBtn.disabled = false;
-      sendBtn.textContent = '发送';
       if (!res.ok) {
         var why = res.status === 401 || res.status === 403 ? 'Token 没有写权限' : ('HTTP ' + res.status);
-        tipClear();
-        tipText('发送失败：' + why + '（消息没发出去）', 'warn');
-        updateAuth();
+        tipClear(); tipText('消息发送失败：' + why, 'warn');
         return;
       }
-      ta.value = '';
-      ta.style.height = 'auto';
-      merge([{
-        p: path, at: msg.at, nick: msg.nick, owner: msg.owner, text: msg.text, image: ''
-      }]);
+      merge([msg]);
       saveCache();
       render(true);
       updateAuth();
     });
   }
+
+  // 语音输入（识别转文字填入输入框，不自动发送）
+  var srOn = false;
+  var srObj = null;
+  function srToggle() {
+    if (!SR) return;
+    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srObj = null; srOn = false; micBtn.classList.remove('on'); micBtn.textContent = '🎤'; tipClear(); return; }
+    var r = new SR();
+    srObj = r;
+    srOn = true;
+    micBtn.classList.add('on');
+    micBtn.textContent = '⏹';
+    tipClear();
+    tipText('聆听中…（再点 🎤 停止）', 'warn');
+    var live = '';
+    r.lang = 'zh-CN';
+    r.interimResults = true;
+    r.continuous = false;
+    r.onresult = function (e) {
+      var t = '';
+      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      if (e.results[e.results.length - 1] && e.results[e.results.length - 1].isFinal) live = t;
+      ta.value = (ta.value.slice(0, Math.max(0, ta.value.length - live.length)) + t);
+      grow();
+    };
+    r.onerror = function (e) {
+      var msg = e && e.error === 'not-allowed' ? '语音权限被拒绝' : e && e.error === 'no-speech' ? '没有听到声音' : '语音识别失败';
+      tipClear(); tipText(msg, 'warn');
+      srOn = false; srObj = null;
+      micBtn.classList.remove('on'); micBtn.textContent = '🎤';
+    };
+    r.onend = function () {
+      if (!srOn) return;
+      srOn = false; srObj = null;
+      micBtn.classList.remove('on'); micBtn.textContent = '🎤';
+      tipClear();
+    };
+    try { r.start(); } catch (e) { tipClear(); tipText('语音识别启动失败', 'warn'); srOn = false; srObj = null; micBtn.classList.remove('on'); micBtn.textContent = '🎤'; }
+  }
+  micBtn.onclick = srToggle;
+  recBtn.onclick = recToggle;
 
   function grow() {
     ta.style.height = 'auto';
@@ -1084,6 +1687,10 @@
   function hide() {
     stopPoll();
     zhide();
+    closeVideo();
+    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srObj = null; srOn = false; micBtn.classList.remove('on'); micBtn.textContent = '🎤'; }
+    abortRec();
+    abortRec();
     if (full) setFull(false);
     saveRect();
     root.style.display = 'none';

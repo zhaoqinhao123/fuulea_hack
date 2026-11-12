@@ -735,7 +735,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.9';
+  ver.textContent = 'v3.10';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -1089,13 +1089,14 @@
 
   var inputRow = div('ai-inputrow');
   var photoBtn = button('📷', 'ai-ico ai-shot', '拍照（网页相机）/ 选图（自动上传 GitLab）');
+  var micBtn = button('🎤', 'ai-ico ai-shot', '语音输入（语音识别转文字）');
   var ta = document.createElement('textarea');
   ta.className = 'ai-ta';
   ta.placeholder = '问点什么…（Enter 发送 / Shift+Enter 换行）';
   ta.maxLength = 8000;
   ta.spellcheck = false;
   var sendBtn = button('发送', 'ai-send');
-  inputRow.append(photoBtn, ta, sendBtn);
+  inputRow.append(photoBtn, micBtn, ta, sendBtn);
 
   var stat = div('ai-stat');
   var statTxt = div('grow', '');
@@ -2249,7 +2250,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.9 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.10 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -2496,7 +2497,7 @@
     return 'media/' + mediaUserDir() + '/' + stamp() + '-' + rand4() + ext;
   }
 
-  function compressImage(file) {
+  function compressImage(file, maxEdge) {
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file);
       var img = new Image();
@@ -2505,7 +2506,8 @@
           var w = img.naturalWidth || img.width;
           var h = img.naturalHeight || img.height;
           if (!w || !h) throw new Error('图片尺寸为空');
-          var scale = Math.min(1, 2048 / Math.max(w, h));
+          var limit = Number(maxEdge) > 0 ? Number(maxEdge) : 2048;
+          var scale = Math.min(1, limit / Math.max(w, h));
           var cw = Math.max(1, Math.round(w * scale));
           var ch = Math.max(1, Math.round(h * scale));
           var c = document.createElement('canvas');
@@ -2731,7 +2733,8 @@
       error: '',
       remotePath: '',
       file: file,
-      xhr: null
+      xhr: null,
+      maxEdge: file && file._cam ? 4096 : 2048
     };
     pendingImages.push(item);
     photoQueue.push(item);
@@ -2764,7 +2767,7 @@
     var item = photoQueue.shift();
     photoBusy = true;
     photoBtn.disabled = true;
-    compressImage(item.file).then(blobToDataURL).then(function (dataUrl) {
+    compressImage(item.file, item.maxEdge).then(blobToDataURL).then(function (dataUrl) {
       if (closed) return null;
       if (!dataUrl || dataUrl.indexOf('data:image/') !== 0) throw new Error('图片格式异常');
       item.dataUrl = dataUrl;
@@ -2917,7 +2920,7 @@
         stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
         stream = null;
       }
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false })
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 4096 }, height: { ideal: 2160 }, frameRate: { ideal: 30 } }, audio: false })
         .then(function (s) {
           if (dead) {
             s.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
@@ -2933,7 +2936,67 @@
     }
     function snapNow() {
       if (!v.videoWidth || !v.videoHeight) { cfgMsg.textContent = '相机还没准备好'; return; }
-      // 原生变焦由摄像头输出已放大的画面；软件变焦则裁画面中心，保证成片与预览一致
+      // v3.10 高清拍照：优先 ImageCapture.takePhoto() 取原生最大静态像素（不调系统相机 App）
+      if (track && typeof window.ImageCapture !== 'undefined') {
+        var cap = null;
+        try { cap = new window.ImageCapture(track); } catch (e) {}
+        if (cap && typeof cap.takePhoto === 'function') {
+          // 无原生变焦时才用 takePhoto 全帧；有原生变焦则摄像头已放大画面，仍需 canvas 裁切
+          var done = false;
+          var finish = function (blob) {
+            if (done) return;
+            done = true;
+            if (!blob) { snapCanvas(); return; }
+            var name = 'cam-' + stamp() + '.jpg';
+            var f;
+            try { f = new File([blob], name, { type: blob.type || 'image/jpeg' }); }
+            catch (e) { f = blob; try { f.name = name; } catch (e2) {} }
+            try { f._cam = true; } catch (e) {}
+            stopCam();
+            handlePhoto(f);
+          };
+          try {
+            // 有软件变焦（zoom>1 且非原生）时，takePhoto 后 canvas 中心裁切 zoom 比例，保持成片=预览
+            if (!nativeZoom && zoom > 1.001) {
+              var pr2 = cap.takePhoto();
+              if (pr2 && pr2.then) {
+                pr2.then(function (b) {
+                  if (done) return;
+                  done = true;
+                  if (!b) { snapCanvas(); return; }
+                  cropZoomBlob(b, zoom, function (cropped) {
+                    var name = 'cam-' + stamp() + '.jpg';
+                    var f;
+                    try { f = new File([cropped], name, { type: cropped.type || 'image/jpeg' }); }
+                    catch (e) { f = cropped; try { f.name = name; } catch (e2) {} }
+                    try { f._cam = true; } catch (e) {}
+                    stopCam();
+                    handlePhoto(f);
+                  });
+                }).catch(function () { snapCanvas(); });
+                return;
+              }
+              cropZoomBlob(pr2, zoom, function (cropped) {
+                var name = 'cam-' + stamp() + '.jpg';
+                var f;
+                try { f = new File([cropped], name, { type: cropped.type || 'image/jpeg' }); }
+                catch (e) { f = cropped; try { f.name = name; } catch (e2) {} }
+                stopCam();
+                handlePhoto(f);
+              });
+              return;
+            }
+            var pr = cap.takePhoto();
+            if (pr && pr.then) { pr.then(finish).catch(function () { snapCanvas(); }); return; }
+            finish(pr);
+            return;
+          } catch (e) { /* 回退 canvas */ }
+        }
+      }
+      snapCanvas();
+    }
+    function snapCanvas() {
+      if (!v.videoWidth || !v.videoHeight) { cfgMsg.textContent = '相机还没准备好'; return; }
       var zw = nativeZoom ? 1 : Math.max(1, zoom);
       var sw = v.videoWidth / zw, sh = v.videoHeight / zw;
       var sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
@@ -2951,6 +3014,21 @@
         stopCam();
         handlePhoto(f);
       }, 'image/jpeg', 0.92);
+    }
+    function cropZoomBlob(blob, z, cb) {
+      var url = URL.createObjectURL(blob);
+      var im = new Image();
+      im.onload = function () {
+        var w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+        var cw = Math.max(1, Math.round(w / z)), ch = Math.max(1, Math.round(h / z));
+        var c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        try { c.getContext('2d').drawImage(im, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, cw, ch); } catch (e) {}
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        c.toBlob(function (b) { cb(b || blob); }, 'image/jpeg', 0.95);
+      };
+      im.onerror = function () { try { URL.revokeObjectURL(url); } catch (e) {} cb(blob); };
+      im.src = url;
     }
     snap.onclick = snapNow;
     flip.onclick = function () { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); };
@@ -2971,6 +3049,64 @@
     });
     bubble.append(box);
   }
+
+  // v3.10 语音输入：语音识别转文字填入输入框（不自动发送）
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  var sr = null, srOn = false;
+  if (!SpeechRec) micBtn.style.display = 'none';
+  micBtn.title = SpeechRec ? '语音输入（点击开始 / 再点停止）' : '当前浏览器不支持语音识别';
+  micBtn.onclick = function () {
+    if (!SpeechRec) return;
+    if (srOn) { try { sr.stop(); } catch (e) {} return; }
+    try { sr = new SpeechRec(); } catch (e) { cfgMsg.textContent = '语音识别启动失败：' + (e && e.message ? e.message : e); return; }
+    sr.lang = 'zh-CN';
+    sr.interimResults = true;
+    sr.continuous = false;
+    srOn = true;
+    micBtn.style.background = '#7a2b2b';
+    micBtn.style.color = '#fff';
+    micBtn.textContent = '⏹';
+    var finalTxt = '';
+    sr.onresult = function (ev) {
+      var interim = '';
+      for (var i = ev.resultIndex; i < ev.results.length; i++) {
+        var r = ev.results[i];
+        if (r.isFinal) finalTxt += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      ta.value = finalTxt + interim;
+      grow();
+    };
+    sr.onerror = function (ev) {
+      srOn = false;
+      micBtn.style.background = '';
+      micBtn.style.color = '';
+      micBtn.textContent = '🎤';
+      var map = {
+        'not-allowed': '语音权限被拒绝（请在浏览器设置里允许麦克风）',
+        'no-speech': '没有听到声音',
+        'audio-capture': '没有可用麦克风',
+        'network': '语音识别网络错误（可能需要联网）',
+        'aborted': ''
+      };
+      if (map[ev.error]) cfgMsg.textContent = '语音识别：' + map[ev.error];
+      try { sr.abort(); } catch (e) {}
+    };
+    sr.onend = function () {
+      srOn = false;
+      micBtn.style.background = '';
+      micBtn.style.color = '';
+      micBtn.textContent = '🎤';
+      if (finalTxt) { ta.value = finalTxt; grow(); cfgMsg.textContent = '已识别：' + finalTxt.slice(0, 40) + (finalTxt.length > 40 ? '…' : ''); }
+    };
+    try { sr.start(); } catch (e) {
+      srOn = false;
+      micBtn.style.background = '';
+      micBtn.style.color = '';
+      micBtn.textContent = '🎤';
+      cfgMsg.textContent = '语音识别启动失败（需要 https 或用户手势）';
+    }
+  };
 
   function send() {
     if (busy) { stop(); return; }
@@ -3539,6 +3675,8 @@
 
   function close() {
     closed = true;
+    if (sr) { try { sr.abort(); } catch (e) {} sr = null; }
+    srOn = false;
     if (camStop) { try { camStop(); } catch (e) {} camStop = null; }
     try { stop(); } catch (e) {}
     pendingImages.forEach(function (it) {
