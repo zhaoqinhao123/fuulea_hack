@@ -11,6 +11,7 @@
   var ROOM_DIR = 'message';
   var MEDIA_DIR = 'media';
   var POLL = 30000;
+  var WINDOW_MS = 24 * 60 * 60 * 1000; // v3.10：默认只拉取 / 显示最近 24 小时
   var K_CACHE = 'fh:room:cache';
   var K_RECT = 'fh:ai:roomRect';
   var K_GIT = 'fh:ai:gitToken';
@@ -81,6 +82,21 @@
       pad2(d.getHours()) + '-' + pad2(d.getMinutes()) + '-' + pad2(d.getSeconds());
   }
   function rand4() { return String(Math.floor(Math.random() * 10000)).padStart(4, '0'); }
+  // v3.10：从 message/2026-11-12-17-50-58-1234.json 解析发送时间
+  function pathTime(p) {
+    var b = String(p || '');
+    var i = b.lastIndexOf('/');
+    if (i >= 0) b = b.slice(i + 1);
+    var m = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})/.exec(b);
+    if (!m) return 0;
+    var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+  // 超过 24h 的旧消息不拉取；解析不出时间的保留（避免误删）
+  function inWindow(p) {
+    var t = pathTime(p);
+    return !t || Date.now() - t <= WINDOW_MS;
+  }
   function fmtTime(at) {
     var d = new Date(Number(at) || Date.now());
     if (isNaN(d.getTime())) return '';
@@ -95,9 +111,10 @@
     return GIT_HOST + '/api/v4/projects/' + encodeURIComponent(GIT_PROJ) + '/repository/files/' +
       encodeURIComponent(p) + (raw ? '/raw' : '') + '?ref=' + encodeURIComponent(GIT_BRANCH);
   }
-  function treeUrl(p) {
+  function treeUrl(p, page) {
     return GIT_HOST + '/api/v4/projects/' + encodeURIComponent(GIT_PROJ) + '/repository/tree' +
-      '?ref=' + encodeURIComponent(GIT_BRANCH) + '&per_page=100&path=' + encodeURIComponent(p);
+      '?ref=' + encodeURIComponent(GIT_BRANCH) + '&per_page=100&path=' + encodeURIComponent(p) +
+      (page ? '&page=' + page : '');
   }
   function gitReq(method, url, body, binary) {
     return new Promise(function (resolve) {
@@ -110,7 +127,9 @@
       }
       x.timeout = 45000;
       x.onload = function () {
-        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: x.responseText || '', blob: x.response || null });
+        var hs = '';
+        try { hs = x.getAllResponseHeaders ? x.getAllResponseHeaders() : ''; } catch (e) {}
+        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: x.responseText || '', blob: x.response || null, headers: hs });
       };
       x.onerror = function () { resolve({ ok: false, status: 0, text: '', blob: null }); };
       x.ontimeout = function () { resolve({ ok: false, status: 0, text: 'timeout', blob: null }); };
@@ -123,21 +142,32 @@
     for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     return btoa(bin);
   }
+  function treeItems(text) {
+    var arr = [];
+    try { arr = JSON.parse(text); } catch (e) {}
+    if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
+    return arr.filter(function (x) { return x && x.type === 'blob' && x.path; }).map(function (x) { return x.path; });
+  }
+  function headerNum(h, name) {
+    var m = new RegExp('(?:^|\\r?\\n)' + name + ':\\s*(\\d+)', 'i').exec(String(h || ''));
+    return m ? Number(m[1]) : 0;
+  }
+  // v3.10：消息越攒越多时只取第 1 页会全是旧消息，所以再取最后一页（新的都在那）
   function gitTree(p) {
-    return gitReq('GET', treeUrl(p)).then(function (r) {
+    return gitReq('GET', treeUrl(p, 1)).then(function (r) {
       if (!r.ok) return { ok: false, status: r.status, items: [] };
-      var arr = [];
-      try { arr = JSON.parse(r.text); } catch (e) {}
-      if (Object.prototype.toString.call(arr) !== '[object Array]') arr = [];
-      return {
-        ok: true, status: r.status,
-        items: arr.filter(function (x) { return x && x.type === 'blob' && x.path; }).map(function (x) { return x.path; })
-      };
+      var items = treeItems(r.text);
+      var last = headerNum(r.headers, 'X-Total-Pages');
+      if (last <= 1) return { ok: true, status: r.status, items: items };
+      return gitReq('GET', treeUrl(p, last)).then(function (r2) {
+        if (r2.ok) items = items.concat(treeItems(r2.text));
+        return { ok: true, status: r.status, items: items };
+      });
     });
   }
   function gitRaw(p) {
     return gitReq('GET', fileUrl(p, true)).then(function (r) {
-      return r.ok ? r.text : '';
+      return r.ok ? r.text : null;
     });
   }
   function gitPut(p, text) {
@@ -228,7 +258,7 @@
         size: Number(m.size) || 0, dur: Number(m.dur) || 0,
         transcript: m.transcript == null ? undefined : String(m.transcript)
       };
-    }).slice(-200);
+    }).filter(function (m) { return !m.at || Date.now() - m.at <= WINDOW_MS; }).slice(-200);
     msgs.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
   }
   function saveCache() {
@@ -240,6 +270,8 @@
     msgs.forEach(function (m) { map[m.p] = m; });
     list.forEach(function (m) { if (m && m.p) map[m.p] = m; });
     msgs = Object.keys(map).map(function (k) { return map[k]; });
+    // v3.10：超过 24 小时的消息不保留（含本机缓存）
+    msgs = msgs.filter(function (m) { return !m.at || Date.now() - m.at <= WINDOW_MS; });
     msgs.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
     if (msgs.length > 200) msgs = msgs.slice(-200);
   }
@@ -266,12 +298,14 @@
       transcript: j.transcript == null ? undefined : String(j.transcript)
     };
   }
+  // 拉取失败的消息：不再静默丢弃，返回 { list, failed } 供底部提示
   function fetchPaths(paths) {
-    var out = [], i = 0;
+    var out = [], failed = 0, i = 0;
     function worker() {
       if (i >= paths.length) return Promise.resolve();
       var p = paths[i++];
       return gitRaw(p).then(function (txt) {
+        if (txt == null) { failed++; return worker(); }
         var m = parseMsg(p, txt);
         if (m) out.push(m);
         return worker();
@@ -279,7 +313,7 @@
     }
     var ws = [];
     for (var k = 0; k < 4; k++) ws.push(worker());
-    return Promise.all(ws).then(function () { return out; });
+    return Promise.all(ws).then(function () { return { list: out, failed: failed }; });
   }
 
   // ── Markdown + LaTeX（纯 DOM 构建，绝不把消息当 HTML 注入）──
@@ -597,6 +631,14 @@
     'color:#a9c3ff;font:9.5px/1 inherit;padding:3px 6px;cursor:pointer}',
     '#__rm .rm-tip .ok{color:#66d19e}',
     '#__rm .rm-tip .warn{color:#f0b46a}',
+    // v3.10 拉取失败提示（固定在消息区最底部）
+    '#__rm .rm-err{margin-top:8px;padding:8px 10px;border:1px solid rgba(240,120,90,.5);border-radius:9px;',
+    'background:rgba(240,90,70,.13);color:#f2a48e;font-size:11.5px;line-height:1.6;display:flex;',
+    'align-items:center;gap:8px;flex-wrap:wrap;align-self:center;max-width:96%;flex-shrink:0}',
+    '#__rm .rm-err .t{min-width:0;flex:1;word-break:break-word}',
+    '#__rm .rm-err button{flex-shrink:0;border:1px solid rgba(240,120,90,.6);border-radius:6px;',
+    'background:rgba(240,90,70,.2);color:#ffc3b0;font:10.5px/1 inherit;padding:5px 9px;cursor:pointer}',
+    '#__rm .rm-err button:hover{background:rgba(240,90,70,.34)}',
     '#__rm .rm-compose{display:flex;align-items:flex-end;gap:6px;margin-top:4px}',
     '#__rm .rm-ta{flex:1;min-width:0;min-height:36px;max-height:96px;padding:8px 10px;resize:none;border:1px solid var(--line);',
     'border-radius:9px;background:#151821;color:var(--fg);font:13px/1.45 inherit;outline:none}',
@@ -1201,10 +1243,23 @@
       b.className = 'b';
       b.textContent = '💬';
       e.appendChild(b);
-      e.appendChild(document.createTextNode(token() ? '还没有消息，来发第一条吧' : '配置 GitLab Token 后就能看到大家的消息'));
+      e.appendChild(document.createTextNode(token() ? '最近 24 小时还没有消息，来发第一条吧' : '配置 GitLab Token 后就能看到大家的消息'));
       body.appendChild(e);
     } else {
       msgs.forEach(function (m) { body.appendChild(bubbleFor(m)); });
+    }
+    // v3.10：拉取失败时在最底部固定一条错误信息
+    if (loadErr) {
+      var eb = document.createElement('div');
+      eb.className = 'rm-err';
+      var et = document.createElement('span');
+      et.className = 't';
+      et.textContent = '⚠ ' + loadErr;
+      var rb = document.createElement('button');
+      rb.textContent = '重试';
+      rb.onclick = function (ev) { ev.stopPropagation(); loadRoom(true); };
+      eb.append(et, rb);
+      body.appendChild(eb);
     }
     if (forceBottom || atBottom) body.scrollTop = body.scrollHeight;
     hydrateImages();
@@ -1261,7 +1316,7 @@
     } else {
       tipText('已登录 ');
       tipText(r.user, 'ok');
-      tipText(' · 消息写入 GitLab message/ · 30 秒自动刷新');
+      tipText(' · 消息写入 GitLab message/ · 30 秒自动刷新 · 默认只看最近 24 小时');
       ta.disabled = false;
       ta.placeholder = '以 ' + r.user + ' 的身份发言…（Enter 发送）';
       sendBtn.disabled = false;
@@ -1274,6 +1329,7 @@
   var loading = false;
   var lastLoadAt = 0;
   var pollTimer = null;
+  var loadErr = '';   // v3.10：同步失败时固定在消息区底部显示
   function loadRoom(manual) {
     if (!token()) { updateAuth(); return; }
     if (loading) return;
@@ -1283,17 +1339,20 @@
     tipText('正在同步消息…');
     gitTree(ROOM_DIR).then(function (r) {
       if (!r.ok) {
-        if (r.status === 404) return [];
+        if (r.status === 404) return { list: [], failed: 0 };
         throw new Error('HTTP ' + r.status);
       }
       var known = {};
       msgs.forEach(function (m) { known[m.p] = 1; });
-      var fresh = r.items.filter(function (p) { return !known[p]; });
+      // v3.10：只拉取最近 24 小时的消息，超过 24h 的不下载
+      var fresh = r.items.filter(function (p) { return !known[p] && inWindow(p); });
       if (fresh.length > 40) fresh = fresh.slice(-40);
       return fetchPaths(fresh);
-    }).then(function (list) {
-      merge(list);
+    }).then(function (res) {
+      merge(res.list);
       saveCache();
+      loadErr = '';
+      if (res.failed) loadErr = '有 ' + res.failed + ' 条消息拉取失败（网络或读取权限问题），可点刷新重试';
       render();
       lastLoadAt = Date.now();
       refreshBtn.textContent = '⟳';
@@ -1309,7 +1368,9 @@
       refreshBtn.textContent = '⟳';
       refreshBtn.disabled = false;
       tipClear();
-      tipText('同步失败：' + (e && e.message ? e.message : e) + '（检查 Token 读权限）', 'warn');
+      loadErr = '同步失败：' + (e && e.message ? e.message : e) + '（检查网络 / Token 读权限）';
+      tipText('同步失败', 'warn');
+      render(true);
     });
   }
   function startPoll() {
