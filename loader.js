@@ -166,7 +166,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.10';
+  var TAG = '3.11';
   try { window.__fhTag = TAG; } catch (e) {}
   (function () {
     try {
@@ -1132,7 +1132,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.10', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.11', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

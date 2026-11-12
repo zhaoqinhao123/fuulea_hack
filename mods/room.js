@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.10 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.11 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -11,7 +11,10 @@
   var ROOM_DIR = 'message';
   var MEDIA_DIR = 'media';
   var POLL = 30000;
-  var WINDOW_MS = 24 * 60 * 60 * 1000; // v3.10：默认只拉取 / 显示最近 24 小时
+  // v3.11：24 小时只用于「拉取」——本地已有的消息不再 GET；显示与缓存不再按 24h 过滤
+  var WINDOW_MS = 24 * 60 * 60 * 1000;
+  var MAX_MSGS = 1000;      // v3.11：本地最多保留 1000 条历史
+  var MAX_TREE_PAGES = 12;  // v3.11：树分页最多回溯 12 页
   var K_CACHE = 'fh:room:cache';
   var K_RECT = 'fh:ai:roomRect';
   var K_GIT = 'fh:ai:gitToken';
@@ -67,12 +70,19 @@
     return 'file';
   }
   function mediaName(m) {
-    var p = m.file;
+    if (m.name) return String(m.name);   // v3.11：优先用发送端记下的原始文件名 / 语音标题
+    var p = String(m.file || '');
     var i = p.lastIndexOf('/');
     return i >= 0 ? p.slice(i + 1) : p;
   }
-  function kindLabel(k) {
-    return k === 'image' ? '图片' : k === 'video' ? '视频' : k === 'voice' ? '语音消息' : '文件';
+  // 下载用的文件名：显示名没有扩展名时补上（语音消息标题是「语音消息 0:03」这种）
+  function dlName(m) {
+    var n = mediaName(m);
+    if (mediaExt(n)) return n;
+    var ext = mediaExt(String(m.file || ''));
+    return n + (ext || '');
+  }
+  function kindLabel(k) {    return k === 'image' ? '图片' : k === 'video' ? '视频' : k === 'voice' ? '语音消息' : '文件';
   }
 
   function pad2(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
@@ -92,11 +102,7 @@
     var t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
     return isNaN(t) ? 0 : t;
   }
-  // 超过 24h 的旧消息不拉取；解析不出时间的保留（避免误删）
-  function inWindow(p) {
-    var t = pathTime(p);
-    return !t || Date.now() - t <= WINDOW_MS;
-  }
+  // v3.11：24 小时过滤只用在「拉取」判断（loadRoom 里），不再用于显示/缓存
   function fmtTime(at) {
     var d = new Date(Number(at) || Date.now());
     if (isNaN(d.getTime())) return '';
@@ -121,15 +127,18 @@
       var x = new XMLHttpRequest();
       try { x.open(method, url, true); } catch (e) { resolve({ ok: false, status: 0, text: String(e) }); return; }
       x.setRequestHeader('PRIVATE-TOKEN', token());
-      if (body != null) {
-        if (!binary) x.setRequestHeader('Content-Type', 'application/json');
-        else x.responseType = 'blob';
-      }
+      // v3.11 修复：以前 responseType='blob' 被包在 if (body != null) 里，GET 下载（body=null）
+      // 永远设不上 blob，x.response 是空字符串 → gitGetBlob 恒为 null → 语音/视频/文件全部「下载失败」
+      if (binary) x.responseType = 'blob';
+      else if (body != null) x.setRequestHeader('Content-Type', 'application/json');
       x.timeout = 45000;
       x.onload = function () {
         var hs = '';
         try { hs = x.getAllResponseHeaders ? x.getAllResponseHeaders() : ''; } catch (e) {}
-        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: x.responseText || '', blob: x.response || null, headers: hs });
+        var txt = '';
+        // responseType='blob' 时读 responseText 会抛 InvalidStateError，必须包起来
+        try { txt = x.responseText || ''; } catch (e) {}
+        resolve({ ok: x.status >= 200 && x.status < 300, status: x.status, text: txt, blob: x.response || null, headers: hs });
       };
       x.onerror = function () { resolve({ ok: false, status: 0, text: '', blob: null }); };
       x.ontimeout = function () { resolve({ ok: false, status: 0, text: 'timeout', blob: null }); };
@@ -152,17 +161,34 @@
     var m = new RegExp('(?:^|\\r?\\n)' + name + ':\\s*(\\d+)', 'i').exec(String(h || ''));
     return m ? Number(m[1]) : 0;
   }
-  // v3.10：消息越攒越多时只取第 1 页会全是旧消息，所以再取最后一页（新的都在那）
-  function gitTree(p) {
-    return gitReq('GET', treeUrl(p, 1)).then(function (r) {
-      if (!r.ok) return { ok: false, status: r.status, items: [] };
-      var items = treeItems(r.text);
-      var last = headerNum(r.headers, 'X-Total-Pages');
-      if (last <= 1) return { ok: true, status: r.status, items: items };
-      return gitReq('GET', treeUrl(p, last)).then(function (r2) {
-        if (r2.ok) items = items.concat(treeItems(r2.text));
-        return { ok: true, status: r.status, items: items };
-      });
+  // v3.11：从最后一页往前逐页翻，翻到「本页最老消息已早于 cutoff」就停（最多 MAX_TREE_PAGES 页）；
+  // 第 1 页始终取一次（兜住 junk.json 这类解析不出时间的文件）。以前只取第 1 页 + 最后一页，中间页会漏。
+  function gitTree(p, cutoff) {
+    return gitReq('GET', treeUrl(p, 1)).then(function (first) {
+      if (!first.ok) return { ok: false, status: first.status, items: [] };
+      var out = { ok: true, status: first.status, items: treeItems(first.text) };
+      var last = headerNum(first.headers, 'X-Total-Pages');
+      if (last <= 1) return out;
+      var page = last, fetched = 0;
+      function step() {
+        if (page < 2 || fetched >= MAX_TREE_PAGES) return Promise.resolve(out);
+        var cur = page--;
+        fetched++;
+        return gitReq('GET', treeUrl(p, cur)).then(function (r) {
+          if (!r.ok) return out;
+          var list = treeItems(r.text);
+          if (!list.length) return out;
+          out.items = out.items.concat(list);
+          var oldest = 0;
+          list.forEach(function (x) {
+            var t = pathTime(x);
+            if (t && (!oldest || t < oldest)) oldest = t;
+          });
+          if (oldest && oldest < cutoff) return out;
+          return step();
+        });
+      }
+      return step();
     });
   }
   function gitRaw(p) {
@@ -258,11 +284,11 @@
         size: Number(m.size) || 0, dur: Number(m.dur) || 0,
         transcript: m.transcript == null ? undefined : String(m.transcript)
       };
-    }).filter(function (m) { return !m.at || Date.now() - m.at <= WINDOW_MS; }).slice(-200);
+    }).filter(function (m) { return !!m.p; }).slice(-MAX_MSGS);
     msgs.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
   }
   function saveCache() {
-    msgs = msgs.slice(-200);
+    msgs = msgs.slice(-MAX_MSGS);
     try { save(K_CACHE, JSON.stringify(msgs)); } catch (e) {}
   }
   function merge(list) {
@@ -270,10 +296,9 @@
     msgs.forEach(function (m) { map[m.p] = m; });
     list.forEach(function (m) { if (m && m.p) map[m.p] = m; });
     msgs = Object.keys(map).map(function (k) { return map[k]; });
-    // v3.10：超过 24 小时的消息不保留（含本机缓存）
-    msgs = msgs.filter(function (m) { return !m.at || Date.now() - m.at <= WINDOW_MS; });
+    // v3.11：本地历史不再按 24 小时裁掉（24h 只用于拉取），只受 MAX_MSGS 上限约束
     msgs.sort(function (a, b) { return (a.at || 0) - (b.at || 0); });
-    if (msgs.length > 200) msgs = msgs.slice(-200);
+    if (msgs.length > MAX_MSGS) msgs = msgs.slice(-MAX_MSGS);
   }
   function parseMsg(path, text) {
     var j = null;
@@ -299,15 +324,18 @@
     };
   }
   // 拉取失败的消息：不再静默丢弃，返回 { list, failed } 供底部提示
-  function fetchPaths(paths) {
+  function fetchPaths(paths, onTick) {
     var out = [], failed = 0, i = 0;
     function worker() {
       if (i >= paths.length) return Promise.resolve();
       var p = paths[i++];
       return gitRaw(p).then(function (txt) {
-        if (txt == null) { failed++; return worker(); }
-        var m = parseMsg(p, txt);
-        if (m) out.push(m);
+        if (txt == null) failed++;
+        else {
+          var m = parseMsg(p, txt);
+          if (m) out.push(m);
+        }
+        if (onTick) { try { onTick(out.length + failed, paths.length); } catch (e) {} }
         return worker();
       });
     }
@@ -672,6 +700,11 @@
     '#__rm .rm-vtt{height:28px;padding:0 10px;border:1px solid rgba(120,160,255,.45);border-radius:7px;',
     'background:rgba(77,126,248,.14);color:#a9c3ff;font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
     '#__rm .rm-vtt:hover{background:rgba(77,126,248,.26)}',
+    '#__rm .rm-vdl{height:28px;padding:0 9px;border:1px solid rgba(120,160,255,.45);border-radius:7px;',
+    'background:rgba(77,126,248,.14);color:#a9c3ff;font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
+    '#__rm .rm-vdl:hover{background:rgba(77,126,248,.26)}',
+    '#__rm .rm-file-err{margin-top:6px;font-size:11px;color:#ff9b9b}',
+    '#__rm .rm-file-err.bad{color:#ffb4b4}',
     '#__rm .rm-file-trans{margin-top:7px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.28);',
     'font-size:12px;line-height:1.6;color:#d8dcea;white-space:pre-wrap;word-break:break-word}',
     '#__rm .rm-file-trans .none{color:var(--dim)}',
@@ -700,7 +733,7 @@
     '#__rm .rm-zoom{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.95);display:none;',
     'flex-direction:column;touch-action:none;overscroll-behavior:contain;pointer-events:auto}',
     '#__rm .rm-zoom.on{display:flex}',
-    '#__rm .rm-zoom .zbar{display:flex;align-items:center;gap:6px;padding:8px 10px;flex-shrink:0}',
+    '#__rm .rm-zoom .zbar{display:flex;align-items:center;gap:6px;padding:8px 10px;flex-shrink:0;background:rgba(0,0,0,.6)}',
     '#__rm .rm-zoom .ztit{flex:1;min-width:0;font-size:12px;color:rgba(255,255,255,.9);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '#__rm .rm-zoom .zpct{font:12px/1 ui-monospace,monospace;color:#9dbcff;min-width:42px;text-align:center}',
     '#__rm .rm-zoom button{height:32px;min-width:34px;padding:0 9px;border:1px solid rgba(255,255,255,.22);border-radius:8px;',
@@ -738,7 +771,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.10';
+  badge.textContent = 'v3.11';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   var refreshBtn = document.createElement('button');
@@ -787,8 +820,8 @@
   var micBtn = document.createElement('button');
   micBtn.className = 'rm-cbtn';
   micBtn.textContent = '🎤';
-  micBtn.title = '语音输入（识别转文字）';
-  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) micBtn.hidden = true;
+  micBtn.title = '语音输入（识别转文字，点击开始 / 再点停止）';
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) micBtn.title = '当前浏览器不支持语音识别（点击可查看原因）';
   compose.append(micBtn, fileBtn, recBtn, ta, sendBtn);
   foot.append(tip, compose, fileInput);
 
@@ -1019,8 +1052,26 @@
     });
   }
 
-  // ── v3.10 文件卡片：图片/视频/语音 不自动下载，点击才拉取 ──
-  var mediaCache = {};
+  // ── v3.10 文件卡片：图片/视频/语音 不自动下载，点击才拉取 ── v3.11：下载修复 + 卡片内报错重试 + ⏬ 下载
+  var mediaBlobs = {};   // v3.11：path → Blob，同一条点第二次不再重复下载
+  function downloadBlob(blob, name) {
+    if (!blob) return;
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = name || 'file';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    try { a.click(); } catch (e) {}
+    setTimeout(function () { try { a.remove(); } catch (e) {} try { URL.revokeObjectURL(url); } catch (e) {} }, 8000);
+  }
+  function fileNote(card, s, cls) {
+    var n = card.querySelector('.rm-file-err');
+    if (!n) { n = document.createElement('div'); n.className = 'rm-file-err'; card.appendChild(n); }
+    n.className = 'rm-file-err' + (cls ? ' ' + cls : '');
+    n.textContent = s || '';
+    n.style.display = s ? '' : 'none';
+  }
   function mediaCard(m) {
     var kind = m.kind || mediaType(mediaExt(m.file), m.mime);
     var card = document.createElement('div');
@@ -1039,7 +1090,8 @@
     var sub = document.createElement('div');
     sub.className = 'rm-file-sub';
     var nm = mediaName(m);
-    sub.textContent = nm + (m.dur ? ' · ' + fmtDur(m.dur) : '') + ' · ' + fmtSize(m.size);
+    var durTxt = m.dur ? fmtDur(m.dur) : '';
+    sub.textContent = nm + (durTxt && nm.indexOf(durTxt) < 0 ? ' · ' + durTxt : '') + ' · ' + fmtSize(m.size);
     card.appendChild(sub);
     card.__m = m;
     var state = { loaded: false, url: null, blob: null };
@@ -1048,21 +1100,31 @@
         previewMedia(m, state.url);
         return;
       }
-      card.classList.add('loading');
-      gitGetBlob(m.file).then(function (b) {
-        card.classList.remove('loading');
-        if (!b) { tipText('文件下载失败', 'warn'); return; }
+      loadMedia(m, card, function (b) {
         state.blob = b;
         state.url = URL.createObjectURL(b);
         state.loaded = true;
-        if (kind === 'voice') {
-          showVoice(m, state, card);
-        } else {
-          previewMedia(m, state.url);
-        }
+        if (kind === 'voice') showVoice(m, state, card);
+        else if (kind === 'image' || kind === 'video') previewMedia(m, state.url);
+        else downloadBlob(b, dlName(m));
       });
     });
     return card;
+  }
+  function loadMedia(m, card, cb) {
+    if (mediaBlobs[m.file]) { fileNote(card, ''); cb(mediaBlobs[m.file]); return; }
+    card.classList.add('loading');
+    fileNote(card, '');
+    gitGetBlob(m.file).then(function (b) {
+      card.classList.remove('loading');
+      if (!b || !b.size) {
+        fileNote(card, '下载失败，点击重试', 'bad');
+        tipText('文件下载失败', 'warn');
+        return;
+      }
+      mediaBlobs[m.file] = b;
+      cb(b);
+    });
   }
   function fmtDur(s) { s = Number(s) || 0; return Math.floor(s / 60) + ':' + pad2(Math.floor(s % 60)); }
   function fmtSize(n) {
@@ -1094,10 +1156,24 @@
       bar.className = 'zbar';
       var tit = document.createElement('div');
       tit.className = 'ztit';
+      var dlv = document.createElement('button');
+      dlv.textContent = '⏬';
+      dlv.title = '下载视频';
+      dlv.onclick = function () {
+        var u = vplay.__url || '';
+        if (!u) return;
+        var a = document.createElement('a');
+        a.href = u;
+        a.download = vplay.__dname || 'video.mp4';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        try { a.click(); } catch (e) {}
+        setTimeout(function () { try { a.remove(); } catch (e) {} }, 8000);
+      };
       var cl = document.createElement('button');
       cl.textContent = '✕';
       cl.onclick = closeVideo;
-      bar.append(tit, cl);
+      bar.append(tit, dlv, cl);
       var vd = document.createElement('video');
       vd.controls = true;
       vd.playsInline = true;
@@ -1114,6 +1190,8 @@
     }
     var v = vplay.querySelector('video');
     v.src = url;
+    vplay.__url = url;
+    vplay.__dname = name || 'video.mp4';
     vplay.querySelector('.ztit').textContent = name || '视频';
     vplay.classList.add('on');
     v.onended = null;
@@ -1139,7 +1217,15 @@
       e.stopPropagation();
       showTranscript(m, card);
     };
-    row.append(play, dur, tt);
+    var dl = document.createElement('button');
+    dl.className = 'rm-vdl';
+    dl.textContent = '⏬ 下载';
+    dl.title = '下载到本机';
+    dl.onclick = function (e) {
+      e.stopPropagation();
+      downloadBlob(state.blob || mediaBlobs[m.file], dlName(m));
+    };
+    row.append(play, dur, dl, tt);
     card.appendChild(row);
     var aud = document.createElement('audio');
     aud.src = state.url;
@@ -1179,15 +1265,15 @@
     if (card.__tr) { card.__tr.remove(); card.__tr = null; return; }
     var div = document.createElement('div');
     div.className = 'rm-file-trans';
-    if (m.transcript) {
-      div.textContent = '📝 ' + m.transcript;
-    } else if (m.transcript === '') {
+    var txt = m.transcript == null ? '' : String(m.transcript);
+    if (txt) {
+      div.textContent = '📝 ' + txt;
+    } else {
+      // v3.11：不再假装「转文字中…」（旧版这里永远不动，看起来像没反应）
       var n = document.createElement('span');
       n.className = 'none';
-      n.textContent = '该语音未生成文字（发送端浏览器不支持语音识别）';
+      n.textContent = '该语音发送时未识别到文字（发送端语音识别不可用）';
       div.appendChild(n);
-    } else {
-      div.textContent = '📝 转文字中…';
     }
     card.appendChild(div);
     card.__tr = div;
@@ -1243,7 +1329,7 @@
       b.className = 'b';
       b.textContent = '💬';
       e.appendChild(b);
-      e.appendChild(document.createTextNode(token() ? '最近 24 小时还没有消息，来发第一条吧' : '配置 GitLab Token 后就能看到大家的消息'));
+      e.appendChild(document.createTextNode(token() ? '还没有消息（每次只同步最近 24 小时的新消息），来发第一条吧' : '配置 GitLab Token 后就能看到大家的消息'));
       body.appendChild(e);
     } else {
       msgs.forEach(function (m) { body.appendChild(bubbleFor(m)); });
@@ -1316,7 +1402,7 @@
     } else {
       tipText('已登录 ');
       tipText(r.user, 'ok');
-      tipText(' · 消息写入 GitLab message/ · 30 秒自动刷新 · 默认只看最近 24 小时');
+      tipText(' · 消息写入 GitLab message/ · 30 秒自动刷新 · 只同步最近 24 小时的新消息，本地历史全保留');
       ta.disabled = false;
       ta.placeholder = '以 ' + r.user + ' 的身份发言…（Enter 发送）';
       sendBtn.disabled = false;
@@ -1337,17 +1423,29 @@
     if (manual) { refreshBtn.textContent = '…'; refreshBtn.disabled = true; }
     tipClear();
     tipText('正在同步消息…');
-    gitTree(ROOM_DIR).then(function (r) {
+    var cutoff = Date.now() - WINDOW_MS;
+    gitTree(ROOM_DIR, cutoff).then(function (r) {
       if (!r.ok) {
         if (r.status === 404) return { list: [], failed: 0 };
         throw new Error('HTTP ' + r.status);
       }
       var known = {};
       msgs.forEach(function (m) { known[m.p] = 1; });
-      // v3.10：只拉取最近 24 小时的消息，超过 24h 的不下载
-      var fresh = r.items.filter(function (p) { return !known[p] && inWindow(p); });
-      if (fresh.length > 40) fresh = fresh.slice(-40);
-      return fetchPaths(fresh);
+      // v3.11：本地已有的消息一律不再 GET；只拉「本地没有 + 时间在最近 24h 内」的新消息（解析不出时间的保留）
+      var fresh = r.items.filter(function (p) {
+        if (known[p]) return false;
+        var t = pathTime(p);
+        return t ? t >= cutoff : true;
+      });
+      fresh = fresh.filter(function (p, i) { return fresh.indexOf(p) === i; });
+      fresh.sort(function (a, b) { return (pathTime(a) || 0) - (pathTime(b) || 0); });
+      if (!fresh.length) return { list: [], failed: 0 };
+      tipClear();
+      tipText('正在同步 ' + fresh.length + ' 条新消息…');
+      return fetchPaths(fresh, function (done2, total) {
+        tipClear();
+        tipText('正在同步新消息 ' + done2 + '/' + total + '…');
+      });
     }).then(function (res) {
       merge(res.list);
       saveCache();
@@ -1525,9 +1623,48 @@
     next();
   }
 
-  // 语音录音：MediaRecorder → webm → 上传；停止后立即 SpeechRecognition 转文字存 transcript
+  // 语音录音：MediaRecorder → webm → 上传；v3.11：录音的同时并行跑 SpeechRecognition 生成文字
   var recState = null;
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // v3.11 核心修复：以前是「停止录音之后」才启动识别，那时麦克风已经没声音了，transcript 恒为空。
+  // 现在录音开始就并行识别，边录边累积 final 结果。
+  function startRecSR() {
+    if (!SR) return null;
+    var box = { txt: '', sr: null, stop: false, dead: false, n: 0 };
+    function spawn() {
+      if (box.stop || box.dead || box.n >= 30) return;
+      var r;
+      try { r = new SR(); } catch (e) { box.dead = true; return; }
+      box.n++;
+      r.lang = 'zh-CN';
+      r.interimResults = false;
+      r.continuous = true;
+      r.onresult = function (e) {
+        var start = typeof e.resultIndex === 'number' ? e.resultIndex : 0;
+        for (var i = start; i < e.results.length; i++) {
+          if (e.results[i].isFinal) box.txt += e.results[i][0].transcript;
+        }
+      };
+      r.onerror = function (e) {
+        var er = e && e.error;
+        if (er === 'not-allowed' || er === 'service-not-allowed' || er === 'audio-capture') box.dead = true;
+      };
+      r.onend = function () {
+        if (box.stop || box.dead) return;
+        // Chrome 静音约 60 秒会自动断开，录音中自动续上
+        setTimeout(function () { if (!box.stop && !box.dead) spawn(); }, 120);
+      };
+      box.sr = r;
+      try { r.start(); } catch (e) { box.dead = true; }
+    }
+    spawn();
+    return box;
+  }
+  function stopRecSR(box) {
+    if (!box) return;
+    box.stop = true;
+    try { if (box.sr) box.sr.abort(); } catch (e) {}
+  }
   function recToggle() {
     if (!canSend()) { updateAuth(); tipClear(); tipText('登录并配置 Token 后才能录音', 'warn'); return; }
     if (recState) { stopRec(); return; }
@@ -1559,6 +1696,8 @@
       rec.mr = mr;
       mr.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
       mr.onstop = function () {
+        var srBox = rec.srBox;
+        stopRecSR(srBox);
         try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
         var b = new Blob(chunks, { type: mime || 'audio/webm' });
         recState = null;
@@ -1567,6 +1706,11 @@
         if (rec.cancelled) { tipClear(); return; }
         if (!b.size) { tipClear(); tipText('录音为空，未发送', 'warn'); return; }
         var dur = Math.round((Date.now() - rec.start) / 1000);
+        // v3.11：识别与上传并行，最多等 900ms 让最后的 final 结果落地
+        var txtP = new Promise(function (resolve) {
+          if (!srBox) { resolve(''); return; }
+          setTimeout(function () { resolve(String(srBox.txt || '').trim()); }, 900);
+        });
         tipClear();
         tipText('正在上传语音…');
         uploadBlob(b, 'voice-' + stamp() + '.webm', function (e, path) {
@@ -1575,17 +1719,10 @@
             at: Date.now(), nick: acct().user, owner: ownerTag(), text: '', image: '',
             file: path, kind: 'voice', name: '语音消息 ' + fmtDur(dur), size: b.size, mime: b.type, dur: dur
           };
-          if (SR) {
-            tipClear();
-            tipText('正在识别转文字…');
-            recognizeTranscript(function (txt) {
-              msg.transcript = txt == null ? '' : txt;
-              postMediaMsg(msg);
-            });
-          } else {
-            msg.transcript = '';
+          txtP.then(function (txt) {
+            msg.transcript = txt;
             postMediaMsg(msg);
-          }
+          });
         });
       };
       mr.onerror = function () {
@@ -1596,6 +1733,8 @@
         try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
       };
       mr.start(200);
+      // v3.11：录音一启动就并行识别（不能等停止后再识别，那时已经没有声音了）
+      rec.srBox = startRecSR();
     }).catch(function () {
       if (!recState || recState !== rec) return;
       recState = null;
@@ -1620,28 +1759,11 @@
   function abortRec() {
     if (!recState) return;
     recState.cancelled = true;
+    stopRecSR(recState.srBox);
     if (recState.mr) { try { recState.mr.stop(); } catch (e) {} }
     recState = null;
     recBtn.classList.remove('on');
     recBtn.textContent = '🎙️';
-  }
-  function recognizeTranscript(cb) {
-    if (!SR) { cb(null); return; }
-    var r = new SR();
-    r.lang = 'zh-CN';
-    r.interimResults = false;
-    r.continuous = false;
-    var done = false;
-    var finish = function (txt) { if (done) return; done = true; try { r.abort(); } catch (e) {} cb(txt); };
-    r.onresult = function (e) {
-      var t = '';
-      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      finish(t.trim());
-    };
-    r.onerror = function () { finish(null); };
-    r.onend = function () { finish(null); };
-    try { r.start(); } catch (e) { finish(null); }
-    setTimeout(function () { finish(null); }, 15000);
   }
   function postMediaMsg(msg) {
     var path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
@@ -1669,10 +1791,43 @@
   // 语音输入（识别转文字填入输入框，不自动发送）
   var srOn = false;
   var srObj = null;
+  function srReset() {
+    srOn = false; srObj = null;
+    micBtn.classList.remove('on'); micBtn.textContent = '🎤';
+  }
+  function srErrText(err) {
+    var k = String(err || '');
+    if (k === 'not-allowed' || k === 'service-not-allowed') return '麦克风权限被拒绝：点地址栏 🔒 允许麦克风后重试';
+    if (k === 'no-speech') return '没有听到声音，靠近麦克风再说一次';
+    if (k === 'audio-capture') return '没有可用的麦克风';
+    if (k === 'network') return '语音识别服务连不上（浏览器语音服务需要联网）';
+    if (k === 'language-not-supported') return '浏览器不支持中文语音识别';
+    return '语音识别失败：' + (k || '未知错误');
+  }
   function srToggle() {
-    if (!SR) return;
-    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srObj = null; srOn = false; micBtn.classList.remove('on'); micBtn.textContent = '🎤'; tipClear(); return; }
-    var r = new SR();
+    if (!SR) { tipClear(); tipText('当前浏览器不支持语音识别', 'warn'); return; }
+    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srReset(); tipClear(); return; }
+    // v3.11：先显式请求麦克风权限，否则 SpeechRecognition 可能静默失败，看起来像「点了没反应」
+    if (window.isSecureContext === false) { tipClear(); tipText('当前页面不是 https/localhost，语音识别不可用', 'warn'); return; }
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      tipClear(); tipText('浏览器不支持麦克风采集', 'warn'); return;
+    }
+    tipClear(); tipText('正在请求麦克风权限…');
+    micBtn.textContent = '…';
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      startSrListen();
+    }).catch(function (err) {
+      srReset();
+      var n = err && err.name ? err.name : '';
+      tipClear();
+      tipText(n === 'NotAllowedError' ? '麦克风权限被拒绝：点地址栏 🔒 允许麦克风后重试'
+        : n === 'NotFoundError' ? '没有可用的麦克风' : ('无法访问麦克风：' + (n || '未知错误')), 'warn');
+    });
+  }
+  function startSrListen() {
+    var r;
+    try { r = new SR(); } catch (e) { srReset(); tipClear(); tipText('语音识别启动失败', 'warn'); return; }
     srObj = r;
     srOn = true;
     micBtn.classList.add('on');
@@ -1691,18 +1846,15 @@
       grow();
     };
     r.onerror = function (e) {
-      var msg = e && e.error === 'not-allowed' ? '语音权限被拒绝' : e && e.error === 'no-speech' ? '没有听到声音' : '语音识别失败';
-      tipClear(); tipText(msg, 'warn');
-      srOn = false; srObj = null;
-      micBtn.classList.remove('on'); micBtn.textContent = '🎤';
+      tipClear(); tipText(srErrText(e && e.error), 'warn');
+      srReset();
     };
     r.onend = function () {
       if (!srOn) return;
-      srOn = false; srObj = null;
-      micBtn.classList.remove('on'); micBtn.textContent = '🎤';
+      srReset();
       tipClear();
     };
-    try { r.start(); } catch (e) { tipClear(); tipText('语音识别启动失败', 'warn'); srOn = false; srObj = null; micBtn.classList.remove('on'); micBtn.textContent = '🎤'; }
+    try { r.start(); } catch (e) { srReset(); tipClear(); tipText('语音识别启动失败（需要用户手势）', 'warn'); }
   }
   micBtn.onclick = srToggle;
   recBtn.onclick = recToggle;
@@ -1749,7 +1901,7 @@
     stopPoll();
     zhide();
     closeVideo();
-    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srObj = null; srOn = false; micBtn.classList.remove('on'); micBtn.textContent = '🎤'; }
+    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srReset(); }
     abortRec();
     abortRec();
     if (full) setFull(false);

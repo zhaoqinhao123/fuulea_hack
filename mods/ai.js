@@ -735,7 +735,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.10';
+  ver.textContent = 'v3.11';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -2250,7 +2250,7 @@
   function setStat() {
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.10 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.11 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
@@ -3050,15 +3050,27 @@
     bubble.append(box);
   }
 
-  // v3.10 语音输入：语音识别转文字填入输入框（不自动发送）
+  // v3.10 语音输入：语音识别转文字填入输入框（不自动发送）；v3.11 修「点了没反应」
   var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   var sr = null, srOn = false;
-  if (!SpeechRec) micBtn.style.display = 'none';
   micBtn.title = SpeechRec ? '语音输入（点击开始 / 再点停止）' : '当前浏览器不支持语音识别';
-  micBtn.onclick = function () {
-    if (!SpeechRec) return;
-    if (srOn) { try { sr.stop(); } catch (e) {} return; }
-    try { sr = new SpeechRec(); } catch (e) { cfgMsg.textContent = '语音识别启动失败：' + (e && e.message ? e.message : e); return; }
+  function micReset() {
+    srOn = false;
+    micBtn.style.background = '';
+    micBtn.style.color = '';
+    micBtn.textContent = '🎤';
+  }
+  function micMsg(s) { if (s) labelToast('🎤 ' + s); }
+  function micErrText(k) {
+    if (k === 'not-allowed' || k === 'service-not-allowed') return '麦克风权限被拒绝：点地址栏 🔒 允许麦克风后重试';
+    if (k === 'no-speech') return '没有听到声音，靠近麦克风再说一次';
+    if (k === 'audio-capture') return '没有可用的麦克风';
+    if (k === 'network') return '语音识别服务连不上（浏览器语音服务需要联网）';
+    if (k === 'language-not-supported') return '浏览器不支持中文语音识别';
+    return '语音识别失败：' + (k || '未知错误');
+  }
+  function startSr() {
+    try { sr = new SpeechRec(); } catch (e) { micReset(); micMsg('语音识别启动失败：' + (e && e.message ? e.message : e)); return; }
     sr.lang = 'zh-CN';
     sr.interimResults = true;
     sr.continuous = false;
@@ -3078,34 +3090,36 @@
       grow();
     };
     sr.onerror = function (ev) {
-      srOn = false;
-      micBtn.style.background = '';
-      micBtn.style.color = '';
-      micBtn.textContent = '🎤';
-      var map = {
-        'not-allowed': '语音权限被拒绝（请在浏览器设置里允许麦克风）',
-        'no-speech': '没有听到声音',
-        'audio-capture': '没有可用麦克风',
-        'network': '语音识别网络错误（可能需要联网）',
-        'aborted': ''
-      };
-      if (map[ev.error]) cfgMsg.textContent = '语音识别：' + map[ev.error];
+      micReset();
+      var k = ev && ev.error;
+      if (k !== 'aborted') micMsg(micErrText(k));
       try { sr.abort(); } catch (e) {}
     };
     sr.onend = function () {
-      srOn = false;
-      micBtn.style.background = '';
-      micBtn.style.color = '';
-      micBtn.textContent = '🎤';
-      if (finalTxt) { ta.value = finalTxt; grow(); cfgMsg.textContent = '已识别：' + finalTxt.slice(0, 40) + (finalTxt.length > 40 ? '…' : ''); }
+      micReset();
+      if (finalTxt) { ta.value = finalTxt; grow(); labelToast('已识别 ' + finalTxt.length + ' 字'); }
     };
     try { sr.start(); } catch (e) {
-      srOn = false;
-      micBtn.style.background = '';
-      micBtn.style.color = '';
-      micBtn.textContent = '🎤';
-      cfgMsg.textContent = '语音识别启动失败（需要 https 或用户手势）';
+      micReset();
+      micMsg('语音识别启动失败（需要 https 或用户手势）');
     }
+  }
+  micBtn.onclick = function () {
+    if (!SpeechRec) { labelToast('当前浏览器不支持语音识别（可用系统输入法的语音键）'); return; }
+    if (srOn) { try { sr.stop(); } catch (e) {} return; }
+    // v3.11：先显式请求一次麦克风权限，否则 SpeechRecognition 可能静默失败，看起来像「点了没反应」
+    if (window.isSecureContext === false) { micMsg('当前页面不是 https/localhost，语音识别不可用'); return; }
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) { micMsg('浏览器不支持麦克风采集'); return; }
+    micBtn.textContent = '…';
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      startSr();
+    }).catch(function (err) {
+      micReset();
+      var n = err && err.name ? err.name : '';
+      micMsg(n === 'NotAllowedError' ? '麦克风权限被拒绝：点地址栏 🔒 允许麦克风后重试'
+        : n === 'NotFoundError' ? '没有可用的麦克风' : ('无法访问麦克风：' + (n || '未知错误')));
+    });
   };
 
   function send() {
