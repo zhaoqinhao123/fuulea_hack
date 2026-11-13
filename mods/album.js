@@ -1,4 +1,4 @@
-/* 本机相册 v3.14 — 独立 IndexedDB（fh_album），不再和音乐共用 fh_media
+/* 本机相册 v3.15 — 独立 IndexedDB（fh_album），不再和音乐共用 fh_media
    用途：
      window.__fhAlbum.save(blob, info)        保存原图 / 原视频，返回 id
      window.__fhAlbum.list({owner,kind})      列出当前身份的文件
@@ -17,7 +17,6 @@
   var OLD_DB = 'fh_media';
   var MIG_KEY = 'fh:album:migrated:v1';
   var IDB = window.indexedDB || window.webkitIndexedDB || window.mozIndexedDB;
-  var dbP = null;
   var readyP = null;
   var ov = null;
   var viewOv = null;
@@ -70,9 +69,12 @@
     return !rec.owner || tags.indexOf(rec.owner) >= 0;
   }
 
+  // v3.15：不要长期缓存 IDBDatabase 连接。
+  // 浏览器在版本变化 / 存储回收 / 页面休眠后会关闭旧连接，缓存它会让之后所有
+  // transaction 抛 InvalidStateError: The database connection is closing。
+  // 每次读写都新开连接，事务结束立刻关闭，由浏览器自己管理生命周期。
   function openDb() {
-    if (dbP) return dbP;
-    dbP = new Promise(function (res, rej) {
+    return new Promise(function (res, rej) {
       if (!IDB) { rej(new Error('当前浏览器没有 IndexedDB')); return; }
       var r;
       try { r = IDB.open(DB_NAME, DB_VER); } catch (e) { rej(e); return; }
@@ -82,11 +84,48 @@
           try { d.createObjectStore(DB_STORE, { keyPath: 'id', autoIncrement: true }); } catch (e) {}
         }
       };
-      r.onsuccess = function () { res(r.result); };
+      r.onsuccess = function () {
+        var d = r.result;
+        try {
+          d.onversionchange = function () { try { d.close(); } catch (e) {} };
+        } catch (e) {}
+        res(d);
+      };
       r.onerror = function () { rej(r.error || new Error('相册数据库打不开')); };
       r.onblocked = function () { rej(new Error('相册数据库被其它页面占用，请关闭其它标签页')); };
     });
-    return dbP;
+  }
+
+  // 打开 → 建事务 → 执行 → 事务结束后关闭连接。
+  // fn 可以返回 IDBRequest（取 result）或普通值；异常会中止事务并关连接。
+  function dbRun(mode, fn) {
+    return openDb().then(function (db) {
+      return new Promise(function (res, rej) {
+        var t, out, done = false;
+        function finish(err, val) {
+          if (done) return;
+          done = true;
+          try { db.close(); } catch (e) {}
+          if (err) rej(err); else res(val);
+        }
+        try { t = db.transaction(DB_STORE, mode); }
+        catch (e) { finish(e); return; }
+        t.oncomplete = function () {
+          var val = out;
+          // IDBRequest 的 result 即使为 undefined 也要取出来；不能只判断 !== undefined，
+          // 否则 get() 查不到记录时会把整个 request 对象返回给调用方。
+          if (out && typeof out === 'object' && ('result' in out)) val = out.result;
+          finish(null, val);
+        };
+        t.onerror = function () { finish(t.error || new Error('相册读写失败')); };
+        t.onabort = function () { finish(t.error || new Error('相册读写被中止')); };
+        try { out = fn(t.objectStore(DB_STORE), t); }
+        catch (e) {
+          try { t.abort(); } catch (e2) {}
+          finish(e);
+        }
+      });
+    });
   }
 
   function oldDbOpen() {
@@ -118,20 +157,17 @@
         t.oncomplete = function () {
           try { old.close(); } catch (e) {}
           if (!all.length) { saveLS(MIG_KEY, '1'); res(0); return; }
-          openDb().then(function (db) {
-            var tx = db.transaction(DB_STORE, 'readwrite');
-            var store = tx.objectStore(DB_STORE);
-            all.forEach(function (rec) {
-              if (!rec || !rec.blob) return;
-              try { store.put(rec); } catch (e) {}
-            });
-            tx.oncomplete = function () { saveLS(MIG_KEY, '1'); res(all.length); };
-            tx.onerror = function () { rej(tx.error || new Error('迁移旧相册失败')); };
-            tx.onabort = function () { rej(tx.error || new Error('迁移旧相册被中止')); };
+          var recs = all.filter(function (rec) { return rec && rec.blob; });
+          if (!recs.length) { saveLS(MIG_KEY, '1'); res(0); return; }
+          dbRun('readwrite', function (store) {
+            recs.forEach(function (rec) { store.put(rec); });
+          }).then(function () {
+            saveLS(MIG_KEY, '1');
+            res(recs.length);
           }).catch(rej);
         };
       });
-    }).catch(function (e) {
+    }, function () {
       // 旧库这次打不开（比如被其它标签页占用）不应该影响新相册，但也不要写迁移标记，
       // 下次打开还可以再试，避免把旧照片永久漏掉。
       return 0;
@@ -139,86 +175,45 @@
   }
 
   function ready() {
-    // 注意：不能复用 dbP 存 ready 链。migrate() 里还要调用 openDb()，
-    // 如果 openDb() 返回的是「等待 migrate 完成」的同一个 Promise，就会死锁。
-    if (!readyP) readyP = openDb().then(function (db) { return migrate().then(function () { return db; }); });
+    // ready 只负责「一次性迁移」；不再把数据库连接藏在这个 Promise 里。
+    // 迁移失败时清空缓存，下次打开相册还能重试，而不是一辈子坏着。
+    if (!readyP) {
+      readyP = migrate().then(function () { return true; }).catch(function (e) {
+        readyP = null;
+        throw e;
+      });
+    }
     return readyP;
   }
 
-  function tx(mode, fn) {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, mode);
-        var out;
-        try { out = fn(t.objectStore(DB_STORE), t); } catch (e) { rej(e); return; }
-        t.oncomplete = function () { res(out && out.result !== undefined ? out.result : out); };
-        t.onerror = function () { rej(t.error || new Error('相册读写失败')); };
-        t.onabort = function () { rej(t.error || new Error('相册读写被中止')); };
-      });
-    });
-  }
-
   function add(rec) {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        var q = t.objectStore(DB_STORE).add(rec);
-        q.onsuccess = function () { res(q.result); };
-        q.onerror = function () { rej(q.error || new Error('写入相册失败')); };
-        t.onabort = function () { rej(t.error || new Error('写入相册被中止')); };
-      });
+    return ready().then(function () {
+      return dbRun('readwrite', function (store) { return store.add(rec); });
     });
   }
   function all() {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readonly');
-        var q = t.objectStore(DB_STORE).getAll();
-        q.onsuccess = function () { res(q.result || []); };
-        q.onerror = function () { rej(q.error || new Error('读取相册失败')); };
-      });
+    return ready().then(function () {
+      return dbRun('readonly', function (store) { return store.getAll(); });
     });
   }
   function get(id) {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readonly');
-        var q = t.objectStore(DB_STORE).get(id);
-        q.onsuccess = function () { res(q.result || null); };
-        q.onerror = function () { rej(q.error || new Error('读取相册失败')); };
-      });
+    return ready().then(function () {
+      return dbRun('readonly', function (store) { return store.get(id); });
     });
   }
   function put(rec) {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        var q = t.objectStore(DB_STORE).put(rec);
-        q.onsuccess = function () { res(q.result); };
-        q.onerror = function () { rej(q.error || new Error('更新相册失败')); };
-        t.onabort = function () { rej(t.error || new Error('更新相册被中止')); };
-      });
+    return ready().then(function () {
+      return dbRun('readwrite', function (store) { return store.put(rec); });
     });
   }
   function del(id) {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        var q = t.objectStore(DB_STORE).delete(id);
-        q.onsuccess = function () { res(1); };
-        q.onerror = function () { rej(q.error || new Error('删除相册失败')); };
-        t.onabort = function () { rej(t.error || new Error('删除相册被中止')); };
-      });
+    return ready().then(function () {
+      return dbRun('readwrite', function (store) { store.delete(id); return 1; });
     });
   }
   function clearAll() {
-    return ready().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        t.objectStore(DB_STORE).clear();
-        t.oncomplete = function () { res(1); };
-        t.onerror = function () { rej(t.error || new Error('清空相册失败')); };
-      });
+    return ready().then(function () {
+      return dbRun('readwrite', function (store) { store.clear(); return 1; });
     });
   }
 
@@ -297,13 +292,14 @@
     var s = document.createElement('style');
     s.id = 'fhaCss';
     s.textContent = [
-      '#fhaOv{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:14px;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#e9e9ef}',
+      '#fhaOv{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:14px;height:100vh;height:100dvh;overflow:hidden;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#e9e9ef}',
       '#fhaOv *{box-sizing:border-box}',
-      '#fhaOv .fha-card{width:min(880px,100%);height:min(88vh,760px);display:flex;flex-direction:column;background:#17171d;border:1px solid rgba(255,255,255,.14);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6)}',
-      '#fhaOv .fha-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.1);flex-shrink:0}',
+      // v3.15：用 grid 固定四行，body 是唯一可伸缩/滚动的行，底栏不会再被挤出卡片。
+      '#fhaOv .fha-card{width:min(880px,100%);height:88vh;height:min(760px,calc(100dvh - 28px));max-height:calc(100dvh - 28px);display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;background:#17171d;border:1px solid rgba(255,255,255,.14);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6)}',
+      '#fhaOv .fha-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.1);flex-shrink:0;min-width:0}',
       '#fhaOv .fha-tit{flex:1;min-width:0;font:700 14px/1.2 inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '#fhaOv .fha-x{width:32px;height:32px;border:0;border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font:16px/1 inherit;cursor:pointer}',
-      '#fhaOv .fha-tools{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;flex-shrink:0}',
+      '#fhaOv .fha-x{width:32px;height:32px;border:0;border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font:16px/1 inherit;cursor:pointer;flex-shrink:0}',
+      '#fhaOv .fha-tools{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex-wrap:wrap;flex-shrink:0;min-width:0}',
       '#fhaOv .fha-seg{display:flex;gap:4px;background:rgba(255,255,255,.06);border-radius:9px;padding:3px}',
       '#fhaOv .fha-seg button{height:28px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:#b9b9c6;font:12px/1 inherit;cursor:pointer}',
       '#fhaOv .fha-seg button.on{background:#4d7ef8;color:#fff}',
@@ -317,17 +313,18 @@
       '#fhaOv .fha-item .fha-meta{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;gap:4px;padding:3px 5px;background:linear-gradient(transparent,rgba(0,0,0,.82));color:#fff;font:9.5px/1.4 ui-monospace,monospace;pointer-events:none}',
       '#fhaOv .fha-item .fha-dot{position:absolute;right:6px;top:6px;width:19px;height:19px;border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.35);color:#fff;font:12px/15px inherit;text-align:center;pointer-events:none}',
       '#fhaOv .fha-item.on .fha-dot{background:#4d7ef8;border-color:#4d7ef8}',
-      '#fhaOv .fha-empty{grid-column:1/-1;padding:48px 16px;text-align:center;color:#8f8f9e;font-size:13px;line-height:1.9}',
-      '#fhaOv .fha-foot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid rgba(255,255,255,.1);flex-shrink:0}',
+      '#fhaOv .fha-empty{grid-column:1/-1;padding:40px 16px;text-align:center;color:#8f8f9e;font-size:13px;line-height:1.9}',
+      '#fhaOv .fha-empty .fha-btn{margin-top:12px}',
+      '#fhaOv .fha-foot{display:flex;align-items:center;gap:8px;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(255,255,255,.1);flex-shrink:0;min-width:0}',
       '#fhaOv .fha-status{flex:1;min-width:0;color:#9d9dab;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '#fhaOv .fha-btn{height:36px;padding:0 16px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.07);color:#fff;font:13px/1 inherit;cursor:pointer}',
+      '#fhaOv .fha-btn{height:36px;padding:0 16px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.07);color:#fff;font:13px/1 inherit;cursor:pointer;flex-shrink:0}',
       '#fhaOv .fha-btn.primary{background:linear-gradient(180deg,#4d7ef8,#3a62d6);border-color:transparent;font-weight:600}',
       '#fhaOv .fha-btn:disabled{opacity:.5;cursor:default}',
       '#fhaView{position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column}',
       '#fhaView .v{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}',
       '#fhaView .b{display:flex;gap:8px;justify-content:center;padding:12px;background:rgba(0,0,0,.72);flex-wrap:wrap}',
       '#fhaView .b button{height:34px;padding:0 14px;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font:12.5px/1 inherit;cursor:pointer}',
-      '@media(max-width:560px){#fhaOv{padding:0}#fhaOv .fha-card{width:100%;height:100%;max-height:none;border:0;border-radius:0}#fhaOv .fha-body{grid-template-columns:repeat(3,1fr);gap:6px;padding:8px}}'
+      '@media(max-width:560px){#fhaOv{padding:0}#fhaOv .fha-card{width:100%;height:100%;height:100dvh;max-height:none;border:0;border-radius:0}#fhaOv .fha-body{grid-template-columns:repeat(3,1fr);gap:6px;padding:8px}}'
     ].join('');
     document.head.appendChild(s);
   }
@@ -352,6 +349,7 @@
     var items = [];
     var filter = 'all';
     var sending = false;
+    var loadSeq = 0;
 
     var root = el('div');
     root.id = 'fhaOv';
@@ -502,13 +500,24 @@
       paintSel();
     }
     function load() {
+      var seq = ++loadSeq;
       status.textContent = '读取相册…';
       list({ owner: opts.owner || currentOwner() }).then(function (a) {
+        if (seq !== loadSeq) return;
         items = a;
         render();
       }).catch(function (e) {
+        if (seq !== loadSeq) return;
+        var msg = e && e.message ? e.message : String(e || '未知错误');
+        var friendly = /closing|InvalidState|transaction/i.test(msg)
+          ? '数据库连接已断开，已重新连接，请重试。' : msg;
         body.innerHTML = '';
-        body.append(el('div', 'fha-empty', '相册打不开：' + (e && e.message ? e.message : e)));
+        var box = el('div', 'fha-empty');
+        box.append(el('div', '', '相册打不开：' + friendly));
+        var retry = el('button', 'fha-btn', '重试');
+        retry.onclick = function () { load(); };
+        box.append(retry);
+        body.append(box);
         status.textContent = '读取失败';
       });
     }

@@ -66,7 +66,10 @@
     var path = 'media/' + mediaUserDir() + '/' + Date.now() + '-' + Math.floor(Math.random() * 9000 + 1000) + mediaExt(blob, name);
     var r = new FileReader();
     r.onload = function () {
-      var b64 = String(r.result || '').split(',')[1] || '';
+      // v3.15：MIME 里可能带逗号（video/webm;codecs=vp8,opus），必须找 ;base64, 标记
+      var du = String(r.result || '');
+      var bi = du.indexOf(';base64,');
+      var b64 = (bi >= 0 ? du.slice(bi + 8) : (du.split(',')[1] || '')).replace(/\s+/g, '');
       if (!b64) return cb('读取文件失败');
       var body = JSON.stringify({
         branch: 'main', content: b64, encoding: 'base64',
@@ -251,7 +254,7 @@
     }
     if (window.__fhCam) { go(); return; }
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.14';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.15';
     sc.onload = go;
     sc.onerror = function () { alert('相机模块加载失败（检查网络 / CDN）'); };
     document.head.appendChild(sc);

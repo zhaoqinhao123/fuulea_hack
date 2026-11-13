@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.14 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.15 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -265,23 +265,78 @@
       r.readAsDataURL(blob);
     });
   }
+  // v3.15：dataURL 的 MIME 可能带逗号（video/webm;codecs=vp8,opus），
+  // 绝不能再 split(',')[1]，否则会把 ";base64," 前面的 codec 字符串当文件内容。
+  function dataUrlBase64(s) {
+    var str = String(s || '');
+    var i = str.indexOf(';base64,');
+    var b64 = i >= 0 ? str.slice(i + 8) : (str.indexOf(',') >= 0 ? str.slice(str.indexOf(',') + 1) : '');
+    b64 = b64.replace(/\s+/g, '');
+    if (b64.length % 4 === 2) b64 += '==';
+    else if (b64.length % 4 === 3) b64 += '=';
+    return b64;
+  }
   function mediaNewPath(ext) {
     return MEDIA_DIR + '/' + mediaUserDir() + '/' + stamp() + '-' + rand4() + (ext || '.jpg');
+  }
+  // 上传后核对仓库里实际字节数。GitLab 的 raw HEAD 会返回 Content-Length；
+  // 没有暴露该头时退回 files API 的 size 字段。
+  function uploadedSize(path) {
+    return gitReq('HEAD', fileUrl(path, true)).then(function (r) {
+      if (r.ok) {
+        var n = headerNum(r.headers, 'Content-Length');
+        if (n) return n;
+      }
+      return gitReq('GET', fileUrl(path)).then(function (m) {
+        if (!m.ok) return -1;
+        try {
+          var j = JSON.parse(m.text || '{}');
+          return Number(j.size) > 0 ? Number(j.size) : -1;
+        } catch (e) { return -1; }
+      });
+    }).catch(function () { return -1; });
+  }
+  function deleteUploaded(path) {
+    try {
+      return gitReq('DELETE', fileUrl(path), JSON.stringify({
+        branch: GIT_BRANCH, commit_message: 'remove corrupt upload ' + path.replace(/^media\//, '')
+      })).catch(function () {});
+    } catch (e) {}
+  }
+  function verifyUploaded(path, blob, cb) {
+    var tries = 0;
+    function check() {
+      uploadedSize(path).then(function (n) {
+        if (n === blob.size) return cb(null, path);
+        if (n < 0 && tries < 2) {
+          // GitLab 刚提交后偶尔会有短暂的读副本延迟，重试几次再判失败。
+          tries++;
+          setTimeout(check, 350);
+          return;
+        }
+        if (n < 0) return cb('上传后无法读取文件大小，请刷新聊天室确认');
+        deleteUploaded(path);
+        cb('上传校验失败：本地 ' + blob.size + ' 字节，仓库 ' + n + ' 字节（已删除坏文件）');
+      }).catch(function (e) {
+        cb('上传校验失败：' + (e && e.message ? e.message : e));
+      });
+    }
+    check();
   }
   function uploadBlob(blob, name, cb) {
     var ext = mediaExt(name);
     var path = mediaNewPath(ext || mediaExt(blob.name) || (String(blob.type || '').indexOf('video/') === 0 ? '.mp4' : '.jpg'));
     blobToDataURL(blob).then(function (dataUrl) {
-      var b64 = String(dataUrl).split(',')[1] || '';
+      var b64 = dataUrlBase64(dataUrl);
       if (!b64) return cb('读取文件失败');
       var body = JSON.stringify({
         branch: GIT_BRANCH, content: b64, encoding: 'base64',
         commit_message: 'upload media ' + path.replace(/^media\//, '')
       });
       gitReq('POST', fileUrl(path), body).then(function (res) {
-        if (res.ok) return cb(null, path);
+        if (res.ok) return verifyUploaded(path, blob, cb);
         if (res.status === 400 && /already exists/i.test(res.text || '')) {
-          var p2 = mediaNewPath(ext || mediaExt(blob.name) || '.jpg');
+          var p2 = mediaNewPath(ext || mediaExt(blob.name) || (String(blob.type || '').indexOf('video/') === 0 ? '.mp4' : '.jpg'));
           uploadBlobPath(blob, name, p2, cb);
           return;
         }
@@ -293,14 +348,14 @@
   }
   function uploadBlobPath(blob, name, path, cb) {
     blobToDataURL(blob).then(function (dataUrl) {
-      var b64 = String(dataUrl).split(',')[1] || '';
+      var b64 = dataUrlBase64(dataUrl);
       if (!b64) return cb('读取文件失败');
       var body = JSON.stringify({
         branch: GIT_BRANCH, content: b64, encoding: 'base64',
         commit_message: 'upload media ' + path.replace(/^media\//, '')
       });
       gitReq('POST', fileUrl(path), body).then(function (res) {
-        if (res.ok) return cb(null, path);
+        if (res.ok) return verifyUploaded(path, blob, cb);
         var detail = '';
         try { var j = JSON.parse(res.text || '{}'); detail = j.message || ''; } catch (e) {}
         cb('HTTP ' + res.status + (detail ? ' ' + detail : ''));
@@ -725,8 +780,12 @@
     '#__rm .rm-err button{flex-shrink:0;border:1px solid rgba(240,120,90,.6);border-radius:6px;',
     'background:rgba(240,90,70,.2);color:#ffc3b0;font:10.5px/1 inherit;padding:5px 9px;cursor:pointer}',
     '#__rm .rm-err button:hover{background:rgba(240,90,70,.34)}',
-    '#__rm .rm-compose{display:flex;align-items:flex-end;gap:5px;margin-top:4px}',
-    '#__rm .rm-ta{flex:1;min-width:0;min-height:54px;max-height:96px;padding:8px 10px;resize:none;overflow-y:auto;border:1px solid var(--line);',
+    '#__rm .rm-compose{display:flex;flex-direction:column;gap:5px;margin-top:4px;min-width:0}',
+    '#__rm .rm-tools{display:flex;align-items:center;gap:5px;min-width:0;overflow-x:auto;overflow-y:hidden;',
+    'scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:1px}',
+    '#__rm .rm-tools::-webkit-scrollbar{display:none}',
+    '#__rm .rm-inputrow{display:flex;align-items:flex-end;gap:5px;min-width:0}',
+    '#__rm .rm-ta{flex:1;min-width:0;min-height:38px;max-height:96px;padding:8px 10px;resize:none;overflow-y:auto;border:1px solid var(--line);',
     'border-radius:9px;background:var(--input);color:var(--fg);font:13px/1.45 inherit;outline:none}',
     '#__rm .rm-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,126,248,.14)}',
     '#__rm .rm-ta:disabled{opacity:.55;cursor:not-allowed}',
@@ -848,7 +907,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.14';
+  badge.textContent = 'v3.15';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板
@@ -935,9 +994,13 @@
   tip.className = 'rm-tip';
   var compose = document.createElement('div');
   compose.className = 'rm-compose';
+  var tools = document.createElement('div');
+  tools.className = 'rm-tools';
+  var inputRow = document.createElement('div');
+  inputRow.className = 'rm-inputrow';
   var ta = document.createElement('textarea');
   ta.className = 'rm-ta';
-  ta.rows = 2;
+  ta.rows = 1;
   ta.maxLength = 8000;
   ta.placeholder = '说点什么…（Enter 发送 / Shift+Enter 换行）';
   var sendBtn = document.createElement('button');
@@ -972,7 +1035,9 @@
   albumBtn.className = 'rm-cbtn';
   albumBtn.textContent = '🖼';
   albumBtn.title = '从本机相册选择（拍照 / 录像会自动存进去）';
-  compose.append(micBtn, camBtn, albumBtn, fileBtn, recBtn, ta, sendBtn);
+  tools.append(micBtn, camBtn, albumBtn, fileBtn, recBtn);
+  inputRow.append(ta, sendBtn);
+  compose.append(tools, inputRow);
   foot.append(tip, compose, fileInput);
 
   var grip = document.createElement('div');
@@ -1822,7 +1887,7 @@
           return;
         }
         ta.value = '';
-        ta.style.height = 'auto';
+        grow();
         var full = {};
         for (var k in msg) full[k] = msg[k];
         full.p = path;
@@ -1868,7 +1933,7 @@
     if (camQueue) { camQueue.push(cb); return; }
     camQueue = [cb];
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.14';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.15';
     sc.onload = function () {
       var q = camQueue || [];
       camQueue = null;
@@ -1987,7 +2052,7 @@
       tipText(msg || '相册模块加载失败（检查网络 / CDN）', 'warn');
     }
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.14';
+    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.15';
     sc.onload = function () { if (window.__fhAlbum) loaded(); else fail(); };
     sc.onerror = function () {
       if (window.__fhLoadMod) {

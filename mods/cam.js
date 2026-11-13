@@ -1,4 +1,4 @@
-/* 网页相机 v3.14 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
+/* 网页相机 v3.15 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
    用法：
      window.__fhCam.open({
        title: '拍照',
@@ -34,7 +34,7 @@
       if (S) toast(S, '相册模块加载失败，这次拍摄不会自动保存', true);
     }
     var sc = document.createElement('script');
-    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.14';
+    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.15';
     sc.onload = function () { if (window.__fhAlbum) ok(); else fail(); };
     sc.onerror = fail;
     document.head.appendChild(sc);
@@ -134,6 +134,7 @@
     if (s.timer) { clearInterval(s.timer); s.timer = 0; }
     try { if (s.recorder && s.recorder.state === 'recording') s.recorder.stop(); } catch (e) {}
     s.recorder = null;
+    stopCanvasRec(s);
     stopStream(s);
     if (s.mic) { try { s.mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} s.mic = null; }
     try { s.root.remove(); } catch (e) {}
@@ -147,6 +148,19 @@
     }
     s.track = null;
     if (s.v) { try { s.v.srcObject = null; } catch (e) {} }
+  }
+
+  function stopCanvasRec(s) {
+    if (!s) return;
+    if (s.recRaf) {
+      try { cancelAnimationFrame(s.recRaf); } catch (e) {}
+      s.recRaf = 0;
+    }
+    if (s.recCanvasStream) {
+      try { s.recCanvasStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+      s.recCanvasStream = null;
+    }
+    s.recCanvas = null;
   }
 
   function toast(s, text, bad) {
@@ -169,6 +183,7 @@
       res: readRes(), zoom: 1, dead: false, preview: !!opts.preview,
       stream: null, track: null, recorder: null, chunks: [], mic: null,
       recBytes: 0, recStart: 0, timer: 0, lastPhotoAt: 0,
+      recCanvas: null, recRaf: 0, recCanvasStream: null,
       previewEl: null, previewUrl: '', previewBlob: null, previewInfo: null, previewKind: '',
       sending: false
     };
@@ -216,14 +231,18 @@
       });
     }
 
+    var stage = s.stage = el('div', 'position:relative;flex:1;min-height:0;width:100%;overflow:hidden;background:#000');
     var v = s.v = document.createElement('video');
     v.autoplay = true;
     v.muted = true;
     v.playsInline = true;
     v.setAttribute('playsinline', '');
     v.setAttribute('webkit-playsinline', '');
-    v.style.cssText = 'flex:1;min-height:0;width:100%;background:#000;object-fit:contain;' +
+    // v3.15：preview 与裁切统一用 cover。stage 负责遮住超出部分，
+    // video 只做 transform: scale()，取景框和最终输出使用同一套几何。
+    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:cover;' +
       'transition:transform .12s;transform-origin:center center';
+    stage.appendChild(v);
 
     var toastEl = s.toastEl = el('div', 'position:absolute;left:50%;top:64px;transform:translateX(-50%);z-index:8;' +
       'max-width:82%;padding:8px 13px;border-radius:999px;background:rgba(0,0,0,.66);color:#fff;' +
@@ -273,7 +292,7 @@
 
     root.append(top);
     if (modeBar) root.append(modeBar);
-    root.append(v, toastEl, zWrap, recLabel, bar, failBox);
+    root.append(stage, toastEl, zWrap, recLabel, bar, failBox);
     document.body.append(root);
 
     // ── 打开摄像头 ──
@@ -292,6 +311,7 @@
 
     function fail(text) {
       s.dead = true;
+      stopCanvasRec(s);
       stopStream(s);
       s.bar.style.display = 'none';
       s.zWrap.style.display = 'none';
@@ -329,6 +349,24 @@
       zLab.textContent = s.zoom.toFixed(1) + '×';
       zRange.value = String(s.zoom);
       v.style.transform = s.zoom > 1.001 ? 'scale(' + s.zoom + ')' : '';
+    }
+    // 当前屏幕实际看到的源区域。object-fit:cover 先按 stage 比例裁一次，
+    // 再叠加 transform:scale(zoom)；拍照 / 录像都从这里取，预览和成片才会一致。
+    function cropRect() {
+      var vw = Number(v.videoWidth) || 0, vh = Number(v.videoHeight) || 0;
+      var r;
+      try { r = stage.getBoundingClientRect(); } catch (e) { return null; }
+      var stw = Number(r.width) || 0, sth = Number(r.height) || 0;
+      if (!vw || !vh || !stw || !sth) return null;
+      var cover = Math.max(stw / vw, sth / vh);
+      var scale = cover * Math.max(1, s.zoom);
+      var sw = Math.min(vw, stw / scale);
+      var sh = Math.min(vh, sth / scale);
+      if (sw < 2 || sh < 2) return null;
+      return {
+        sx: (vw - sw) / 2, sy: (vh - sh) / 2,
+        sw: sw, sh: sh, w: stw, h: sth
+      };
     }
     zOut.onclick = function () { applyZoom(s.zoom - 0.2); };
     zIn.onclick = function () { applyZoom(s.zoom + 0.2); };
@@ -545,14 +583,14 @@
       shot.style.transform = 'scale(.9)';
       setTimeout(function () { shot.style.transform = ''; }, 140);
 
-      var zw = Math.max(1, s.zoom);
-      var sw = v.videoWidth / zw, sh = v.videoHeight / zw;
-      var sx = (v.videoWidth - sw) / 2, sy = (v.videoHeight - sh) / 2;
+      var cr = cropRect();
+      if (!cr) { toast(s, '相机还没准备好', true); return; }
+      var sw = cr.sw, sh = cr.sh;
       var scale = Math.min(1, s.res / Math.max(sw, sh));
       var cw = Math.max(1, Math.round(sw * scale)), ch = Math.max(1, Math.round(sh * scale));
       var c = document.createElement('canvas');
       c.width = cw; c.height = ch;
-      try { c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, cw, ch); }
+      try { c.getContext('2d').drawImage(v, cr.sx, cr.sy, sw, sh, 0, 0, cw, ch); }
       catch (e) { toast(s, '拍照失败：' + (e && e.message ? e.message : e), true); return; }
       c.toBlob(function (b) {
         if (!b) { toast(s, '拍照失败（没有图像数据）', true); return; }
@@ -583,7 +621,48 @@
       micP.then(function (mic) {
         if (s.dead) { if (mic) mic.getTracks().forEach(function (t) { t.stop(); }); return; }
         s.mic = mic || null;
-        var tracks = s.stream.getVideoTracks().slice(0);
+        // v3.15：录像也走和预览一致的裁切。把当前可见区域逐帧画到隐藏 canvas，
+        // 再用 captureStream 交给 MediaRecorder；不支持时退回原始摄像头流。
+        var capture = s.stream.getVideoTracks().slice(0);
+        var useCanvas = false;
+        var cr = cropRect();
+        if (cr && window.HTMLCanvasElement && HTMLCanvasElement.prototype.captureStream) {
+          var outScale = Math.min(1, 1920 / Math.max(cr.sw, cr.sh));
+          var cw = Math.max(2, Math.round(cr.sw * outScale / 2) * 2);
+          var ch = Math.max(2, Math.round(cr.sh * outScale / 2) * 2);
+          var cv = document.createElement('canvas');
+          cv.width = cw; cv.height = ch;
+          var ctx = cv.getContext('2d');
+          if (ctx) {
+            var draw = function () {
+              if (!s || s.dead || !s.recCanvas) return;
+              var r2 = cropRect();
+              if (r2) {
+                try { ctx.drawImage(v, r2.sx, r2.sy, r2.sw, r2.sh, 0, 0, cw, ch); } catch (e) {}
+              }
+              s.recRaf = requestAnimationFrame(draw);
+            };
+            s.recCanvas = cv;
+            draw();
+            try {
+              var vs = cv.captureStream(30);
+              if (vs && vs.getVideoTracks && vs.getVideoTracks().length) {
+                s.recCanvasStream = vs;
+                capture = vs.getVideoTracks().slice(0);
+                useCanvas = true;
+              } else {
+                stopCanvasRec(s);
+              }
+            } catch (e) {
+              stopCanvasRec(s);
+            }
+          }
+        }
+        if (!useCanvas) {
+          capture = s.stream.getVideoTracks().slice(0);
+          if (s.zoom > 1.001) toast(s, '当前浏览器不支持变焦录像，将录原始画面', true);
+        }
+        var tracks = capture;
         if (s.mic) tracks = tracks.concat(s.mic.getAudioTracks());
         var mixed = new MediaStream(tracks);
         var mime = pickVideoMime();
@@ -594,6 +673,7 @@
           } : { videoBitsPerSecond: V_BPS, audioBitsPerSecond: 96000 });
         } catch (e) {
           s.recorder = null;
+          stopCanvasRec(s);
           shot.disabled = false;
           updateShutter();
           if (s.mic) { try { s.mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e2) {} s.mic = null; }
@@ -614,6 +694,7 @@
           var dur = Math.round((Date.now() - s.recStart) / 1000);
           s.chunks = [];
           s.recorder = null;
+          stopCanvasRec(s);
           shot.disabled = false;
           updateShutter();
           recLabel.style.display = 'none';
@@ -642,6 +723,7 @@
         try { isMp4 ? s.recorder.start() : s.recorder.start(500); }
         catch (e) {
           s.recorder = null;
+          stopCanvasRec(s);
           shot.disabled = false;
           updateShutter();
           toast(s, '录像启动失败：' + (e && e.message ? e.message : e), true);
