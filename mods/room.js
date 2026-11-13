@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.15 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.16 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -276,6 +276,52 @@
     else if (b64.length % 4 === 3) b64 += '=';
     return b64;
   }
+  // v3.16：上传前先验文件头和 base64 长度。
+  // 以前 v3.14 的 split(',')[1] 会把 "opus;base64" 当内容发上去，
+  // 仓库里只剩 7 字节，消息卡片却显示几百 KB；这里在源头拦住。
+  function headMagicOk(type, u) {
+    var t = String(type || '').toLowerCase();
+    if (t.indexOf('webm') >= 0) {
+      return u.length >= 4 && u[0] === 0x1a && u[1] === 0x45 && u[2] === 0xdf && u[3] === 0xa3;
+    }
+    if (t.indexOf('mp4') >= 0 || t.indexOf('quicktime') >= 0) {
+      for (var i = 0; i + 3 < u.length; i++) {
+        if (u[i] === 0x66 && u[i + 1] === 0x74 && u[i + 2] === 0x79 && u[i + 3] === 0x70) return true;
+      }
+      return false;
+    }
+    if (t.indexOf('jpeg') >= 0 || t.indexOf('jpg') >= 0) return u.length >= 3 && u[0] === 0xff && u[1] === 0xd8 && u[2] === 0xff;
+    if (t.indexOf('png') >= 0) return u.length >= 8 && u[0] === 0x89 && u[1] === 0x50 && u[2] === 0x4e && u[3] === 0x47;
+    if (t.indexOf('gif') >= 0) return u.length >= 4 && u[0] === 0x47 && u[1] === 0x49 && u[2] === 0x46;
+    if (t.indexOf('webp') >= 0) return u.length >= 12 && u[0] === 0x52 && u[1] === 0x49 && u[2] === 0x46 && u[3] === 0x46;
+    return true;
+  }
+  function prepareUpload(blob, cb) {
+    if (!blob || !blob.size) return cb('文件为空，未上传');
+    var type = String(blob.type || '').toLowerCase();
+    var checkMagic = /^(video|audio|image)\//.test(type);
+    function encode() {
+      blobToDataURL(blob).then(function (dataUrl) {
+        var b64 = dataUrlBase64(dataUrl);
+        if (!b64) return cb('文件读取失败');
+        var want = Math.ceil(blob.size / 3) * 4;
+        if (b64.length !== want) {
+          return cb('文件编码异常（本地 ' + blob.size + ' 字节，base64 ' + b64.length + ' 字符，应为 ' + want + '）');
+        }
+        cb(null, b64);
+      }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+    }
+    if (!checkMagic) return encode();
+    if (blob.size < 16) return cb('文件过小（' + blob.size + ' B），不像正常的' + (type.indexOf('video') === 0 ? '视频' : '媒体文件'));
+    var r = new FileReader();
+    r.onload = function () {
+      var u = new Uint8Array(r.result || []);
+      if (!headMagicOk(type, u)) return cb('文件头校验失败（' + type + '），文件可能已损坏');
+      encode();
+    };
+    r.onerror = function () { cb('文件头读取失败'); };
+    r.readAsArrayBuffer(blob.slice(0, 16));
+  }
   function mediaNewPath(ext) {
     return MEDIA_DIR + '/' + mediaUserDir() + '/' + stamp() + '-' + rand4() + (ext || '.jpg');
   }
@@ -326,9 +372,8 @@
   function uploadBlob(blob, name, cb) {
     var ext = mediaExt(name);
     var path = mediaNewPath(ext || mediaExt(blob.name) || (String(blob.type || '').indexOf('video/') === 0 ? '.mp4' : '.jpg'));
-    blobToDataURL(blob).then(function (dataUrl) {
-      var b64 = dataUrlBase64(dataUrl);
-      if (!b64) return cb('读取文件失败');
+    prepareUpload(blob, function (err, b64) {
+      if (err) return cb(err);
       var body = JSON.stringify({
         branch: GIT_BRANCH, content: b64, encoding: 'base64',
         commit_message: 'upload media ' + path.replace(/^media\//, '')
@@ -344,12 +389,11 @@
         try { var j = JSON.parse(res.text || '{}'); detail = j.message || ''; } catch (e) {}
         cb('HTTP ' + res.status + (detail ? ' ' + detail : ''));
       });
-    }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+    });
   }
   function uploadBlobPath(blob, name, path, cb) {
-    blobToDataURL(blob).then(function (dataUrl) {
-      var b64 = dataUrlBase64(dataUrl);
-      if (!b64) return cb('读取文件失败');
+    prepareUpload(blob, function (err, b64) {
+      if (err) return cb(err);
       var body = JSON.stringify({
         branch: GIT_BRANCH, content: b64, encoding: 'base64',
         commit_message: 'upload media ' + path.replace(/^media\//, '')
@@ -360,7 +404,7 @@
         try { var j = JSON.parse(res.text || '{}'); detail = j.message || ''; } catch (e) {}
         cb('HTTP ' + res.status + (detail ? ' ' + detail : ''));
       });
-    }).catch(function (e) { cb(e && e.message ? e.message : String(e)); });
+    });
   }
 
   // ── 缓存 / 消息 ──
@@ -907,7 +951,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.15';
+  badge.textContent = 'v3.16';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板
@@ -1399,7 +1443,7 @@
         state.url = URL.createObjectURL(b);
         state.loaded = true;
         if (kind === 'voice') showVoice(m, state, card);
-        else if (kind === 'image' || kind === 'video') previewMedia(m, state.url);
+        else if (kind === 'image' || kind === 'video') previewMedia(m, state.url, b.size);
         else downloadBlob(b, dlName(m));
       });
     });
@@ -1416,6 +1460,13 @@
         tipText('文件下载失败', 'warn');
         return;
       }
+      var kind = m.kind || mediaType(mediaExt(m.file), m.mime);
+      if (b.size < 64 && (kind === 'video' || kind === 'voice' || kind === 'image')) {
+        fileNote(card, '上传损坏：仓库里只有 ' + b.size + ' B，消息里写的 ' + fmtSize(m.size) + ' 并没有真正上传。' +
+          (kind === 'video' ? '请让发送者从本机相册重发这段视频。' : '请让发送者重发。'), 'bad');
+        tipText('文件在上传时已损坏', 'warn');
+        return;
+      }
       mediaBlobs[m.file] = fixMediaType(b, m);
       cb(mediaBlobs[m.file]);
     });
@@ -1427,10 +1478,10 @@
     if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
     return n + ' B';
   }
-  function previewMedia(m, url) {
+  function previewMedia(m, url, bytes) {
     var kind = m.kind || mediaType(mediaExt(m.file), m.mime);
     if (kind === 'image') { zopen(url, mediaName(m)); return; }
-    if (kind === 'video') { openVideo(url, dlName(m)); return; }
+    if (kind === 'video') { openVideo(url, dlName(m), bytes); return; }
     if (kind === 'voice') { playVoice(m, url); return; }
     // 其他文件 → 下载
     var a = document.createElement('a');
@@ -1442,7 +1493,7 @@
   }
   // 视频播放层（点击播放，不自动播放）
   var vplay = null;
-  function openVideo(url, name) {
+  function openVideo(url, name, bytes) {
     stopAllPlayback();   // v3.12：打开视频前先停掉正在播的语音
     if (!vplay) {
       vplay = document.createElement('div');
@@ -1487,6 +1538,7 @@
     v.src = url;
     vplay.__url = url;
     vplay.__dname = name || 'video.mp4';
+    vplay.__bytes = Number(bytes) || 0;
     vplay.querySelector('.ztit').textContent = name || '视频';
     vplay.classList.add('on');
     v.onended = null;
@@ -1497,7 +1549,11 @@
       if (!stage || stage.querySelector('.rm-vtip')) return;
       var t2 = document.createElement('div');
       t2.className = 'rm-vtip';
-      t2.textContent = '这段视频本机解不了（' + (vplay.__dname || '格式未知') + '）：点上方 ⏬ 下载到本机，用系统播放器或电脑上的 Chrome 打开';
+      if (vplay.__bytes && vplay.__bytes < 64) {
+        t2.textContent = '这个视频上传时只存了 ' + vplay.__bytes + ' 字节，文件已损坏，任何设备都放不了。请让发送者从本机相册重发。';
+      } else {
+        t2.textContent = '这段视频本机解不了（' + (vplay.__dname || '格式未知') + '）：点上方 ⏬ 下载到本机，用系统播放器或电脑上的 Chrome 打开';
+      }
       stage.appendChild(t2);
     };
     // 不自动播放；等用户点播放
@@ -1910,6 +1966,13 @@
           sendBtn.textContent = '发送';
           return;
         }
+        if (!ups || !ups.length) {
+          tipText('没有可发送的文件（上传未完成）', 'warn');
+          busySend = false;
+          sendBtn.disabled = false;
+          sendBtn.textContent = '发送';
+          return;
+        }
         var msg = {
           at: Date.now(), nick: r.user, owner: ownerTag(), text: text, image: '',
           file: ups[0].file, kind: ups[0].kind, name: ups[0].name, size: ups[0].size, mime: ups[0].mime
@@ -1918,6 +1981,12 @@
         tipText('文件已上传，正在发送消息…');
         fin(msg);
       });
+      return;
+    }
+    if (!text) {
+      busySend = false;
+      sendBtn.disabled = false;
+      sendBtn.textContent = '发送';
       return;
     }
     var msg = {
@@ -1933,7 +2002,7 @@
     if (camQueue) { camQueue.push(cb); return; }
     camQueue = [cb];
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.15';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.16';
     sc.onload = function () {
       var q = camQueue || [];
       camQueue = null;
@@ -1986,6 +2055,11 @@
       tipText(kind === 'image' ? '正在发送照片…' : '正在发送视频…');
       shrinkForUpload(blob, kind, function (err, out) {
         if (err) { tipText(err, 'warn'); reject(new Error(err)); return; }
+        if (!out || !out.size) {
+          tipText('录制结果是空文件，未上传；请重新录一次', 'warn');
+          reject(new Error('录制结果为空'));
+          return;
+        }
         if (out.size > 25 * 1048576) {
           var big = '文件超过 25MB 上限（' + fmtSize(out.size) + '）';
           tipText(big, 'warn'); reject(new Error(big)); return;
@@ -2052,7 +2126,7 @@
       tipText(msg || '相册模块加载失败（检查网络 / CDN）', 'warn');
     }
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.15';
+    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.16';
     sc.onload = function () { if (window.__fhAlbum) loaded(); else fail(); };
     sc.onerror = function () {
       if (window.__fhLoadMod) {
@@ -2202,20 +2276,20 @@
     });
   }
   function uploadFiles(list, done) {
-    var i = 0, out = [];
+    var i = 0, out = [], errs = [];
     function next() {
-      if (i >= list.length) { done(null, out); return; }
+      if (i >= list.length) { done(errs.length ? errs : null, out); return; }
       var f = list[i++];
       var isImg = /^image\//.test(String(f.type || ''));
       var prep = isImg ? compressImageFile(f) : Promise.resolve(f);
       prep.then(function (b) {
-        if (!isImg && b.size > 25 * 1048576) { out.push({ err: '视频超过 25MB 上限：' + f.name }); next(); return; }
+        if (!isImg && b.size > 25 * 1048576) { errs.push({ err: '视频超过 25MB 上限：' + f.name }); next(); return; }
         uploadBlob(b, f.name || ('file' + mediaExt(b.type)), function (e, path) {
-          if (e) { out.push({ err: f.name + '：' + e }); next(); return; }
+          if (e) { errs.push({ err: f.name + '：' + e }); next(); return; }
           out.push({ file: path, name: f.name || path.split('/').pop(), size: b.size, mime: b.type, kind: isImg ? 'image' : 'video' });
           next();
         });
-      }).catch(function (e) { out.push({ err: f.name + '：' + (e && e.message ? e.message : e) }); next(); });
+      }).catch(function (e) { errs.push({ err: f.name + '：' + (e && e.message ? e.message : e) }); next(); });
     }
     next();
   }

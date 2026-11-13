@@ -741,7 +741,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.15';
+  ver.textContent = 'v3.16';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -1391,7 +1391,7 @@
           } catch (e) { fail(); }
         } else {
           var s = document.createElement('script');
-          s.src = 'mods/album.js?v=3.15&t=' + Date.now();
+          s.src = 'mods/album.js?v=3.16&t=' + Date.now();
           s.onload = ok;
           s.onerror = fail;
           document.body.append(s);
@@ -2488,7 +2488,7 @@
     if (!statTxt) return;
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.15 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+    statTxt.textContent = 'v3.16 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
       ' · 思考 ' + (DEPTH_NAME[cfg.depth] || 'Default') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;

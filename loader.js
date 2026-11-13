@@ -155,33 +155,35 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.15';
+  var TAG = '3.16';
 
   // 把自己这份源码存进 localStorage，供 44 字符短串 eval 用。
-  function cacheSelf() {
+  function cacheSelf(done) {
+    function finish(ok) { if (typeof done === 'function') { try { done(ok); } catch (e) {} } }
     try {
-      if (localStorage.getItem('fhV') === TAG && localStorage.getItem('fhL')) return;
+      if (localStorage.getItem('fhV') === TAG && localStorage.getItem('fhL')) return finish(true);
       // 主 CDN 在国内常被重置，按顺序换镜像重试
       var hosts = [
         'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@',
         'https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@',
         'https://gcore.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@'
       ];
-      var hi = 0;
+      var hi = 0, settled = false;
       (function tryHost() {
-        if (hi >= hosts.length) return;
+        if (hi >= hosts.length) { if (!settled) { settled = true; finish(false); } return; }
         var x = new XMLHttpRequest();
         x.open('GET', hosts[hi++] + TAG + '/loader.js', true);
         x.timeout = 6000;
         x.onload = function () {
           if (x.status === 200 && x.responseText) {
             try { localStorage.setItem('fhL', x.responseText); localStorage.setItem('fhV', TAG); } catch (e) {}
+            if (!settled) { settled = true; finish(true); }
           } else { tryHost(); }
         };
         x.onerror = x.ontimeout = function () { tryHost(); };
         x.send();
       })();
-    } catch (e) {}
+    } catch (e) { finish(false); }
   }
 
   // 再注入一次 = 隐形 / 显形。同一次注入常被页面重复触发（答题重渲染又跑一遍），
@@ -194,10 +196,21 @@
     if (window.__fhAt && (now - window.__fhAt) < 1500) return;
     var running = window.__fhTag || '';
     if (running && running !== TAG) {
-      fhToast('注入的是 v' + TAG + '，页面还跑着 v' + running + '：刷新页面（F5）后再注入一次');
-      cacheSelf();
+      fhToast('检测到页面还跑着 v' + running + '，正在缓存 v' + TAG + ' 并刷新；刷新后再注入一次即可', 5000);
       PRE.style.display = '';
       window.__fhAt = now;
+      if (window.__fhUpgrading) return;
+      window.__fhUpgrading = 1;
+      cacheSelf(function (ok) {
+        if (!ok) {
+          fhToast('v' + TAG + ' 缓存失败：请刷新页面（F5）后重新注入', 7000);
+          window.__fhUpgrading = 0;
+          return;
+        }
+        try { localStorage.setItem('fhUpgradeFrom', running); } catch (e) {}
+        fhToast('v' + TAG + ' 已缓存，页面即将刷新；刷新后点原来那个 44 字符短串即可', 4000);
+        setTimeout(function () { try { location.reload(); } catch (e) {} }, 1800);
+      });
       return;
     }
     PRE.style.display = (PRE.style.display === 'none') ? '' : 'none';
@@ -207,6 +220,13 @@
 
   try { window.__fhTag = TAG; } catch (e) {}
   cacheSelf();
+  try {
+    var upFrom = localStorage.getItem('fhUpgradeFrom');
+    if (upFrom) {
+      localStorage.removeItem('fhUpgradeFrom');
+      fhToast('已从 v' + upFrom + ' 升级到 v' + TAG, 3500);
+    }
+  } catch (e) {}
 
   var MOD_BASES = [
     'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
@@ -1177,7 +1197,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.15', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.16', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

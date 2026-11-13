@@ -1,4 +1,4 @@
-/* 网页相机 v3.15 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
+/* 网页相机 v3.16 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
    用法：
      window.__fhCam.open({
        title: '拍照',
@@ -34,7 +34,7 @@
       if (S) toast(S, '相册模块加载失败，这次拍摄不会自动保存', true);
     }
     var sc = document.createElement('script');
-    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.15';
+    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.16';
     sc.onload = function () { if (window.__fhAlbum) ok(); else fail(); };
     sc.onerror = fail;
     document.head.appendChild(sc);
