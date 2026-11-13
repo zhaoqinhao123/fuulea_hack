@@ -1,4 +1,4 @@
-/* 本机相册 v3.16 — 独立 IndexedDB（fh_album），不再和音乐共用 fh_media
+/* 本机相册 v3.17 — 独立 IndexedDB（fh_album），不再和音乐共用 fh_media
    用途：
      window.__fhAlbum.save(blob, info)        保存原图 / 原视频，返回 id
      window.__fhAlbum.list({owner,kind})      列出当前身份的文件

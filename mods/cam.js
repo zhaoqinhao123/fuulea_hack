@@ -1,4 +1,4 @@
-/* 网页相机 v3.16 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
+/* 网页相机 v3.17 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 比例/分辨率选择）
    用法：
      window.__fhCam.open({
        title: '拍照',
@@ -10,7 +10,8 @@
        onClose: function () {}
      });
    拍到的照片 / 视频会自动存进本机相册（window.__fhAlbum）。
-   分辨率存在 localStorage: fh:cam:res（长边像素，默认 2560）
+   分辨率存在 localStorage: fh:cam:res（长边像素，默认 1080P）
+    比例存在 localStorage: fh:cam:ratio（默认 16:9）
 */
 (function () {
   'use strict';
@@ -34,37 +35,72 @@
       if (S) toast(S, '相册模块加载失败，这次拍摄不会自动保存', true);
     }
     var sc = document.createElement('script');
-    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.16';
+    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.17';
     sc.onload = function () { if (window.__fhAlbum) ok(); else fail(); };
     sc.onerror = fail;
     document.head.appendChild(sc);
   }
 
   var K_RES = 'fh:cam:res';
+  var K_RATIO = 'fh:cam:ratio';
   var RES_OPTS = [
     { v: 3840, l: '4K' },
     { v: 2560, l: '2K' },
     { v: 1920, l: '1080P' },
     { v: 1280, l: '720P' }
   ];
+  // 16:9 默认；原始 = 摄像头轨道实际比例（多数手机后置是 4:3，选它可吃满传感器）
+  var RATIO_OPTS = [
+    { k: '16:9', l: '16:9', w: 16, h: 9 },
+    { k: '9:16', l: '9:16', w: 9, h: 16 },
+    { k: '4:3', l: '4:3', w: 4, h: 3 },
+    { k: '3:4', l: '3:4', w: 3, h: 4 },
+    { k: '21:9', l: '21:9', w: 21, h: 9 },
+    { k: 'auto', l: '原始', w: 0, h: 0 }
+  ];
   var MAX_VIDEO = 25 * 1024 * 1024;
   var MAX_SEC = 60;
-  var V_BPS = 2800000;
 
   function readRes() {
     var v = 0;
     try { v = parseInt(localStorage.getItem(K_RES) || '', 10); } catch (e) {}
-    if (!v) v = 2560;
+    if (!v) v = 1920;
     for (var i = 0; i < RES_OPTS.length; i++) if (RES_OPTS[i].v === v) return v;
-    return 2560;
+    return 1920;
   }
   function writeRes(v) {
-    v = parseInt(v, 10) || 2560;
+    v = parseInt(v, 10) || 1920;
     try { localStorage.setItem(K_RES, String(v)); } catch (e) {}
   }
   function resLabel(v) {
     for (var i = 0; i < RES_OPTS.length; i++) if (RES_OPTS[i].v === v) return RES_OPTS[i].l;
-    return '2K';
+    return '1080P';
+  }
+  function readRatio() {
+    var k = '';
+    try { k = localStorage.getItem(K_RATIO) || ''; } catch (e) {}
+    for (var i = 0; i < RATIO_OPTS.length; i++) if (RATIO_OPTS[i].k === k) return k;
+    return '16:9';
+  }
+  function writeRatio(k) {
+    try { localStorage.setItem(K_RATIO, String(k || '16:9')); } catch (e) {}
+  }
+  function ratioLabel(k) {
+    for (var i = 0; i < RATIO_OPTS.length; i++) if (RATIO_OPTS[i].k === k) return RATIO_OPTS[i].l;
+    return '16:9';
+  }
+  // 录像比特率随分辨率走：1080P 3Mbps，2K 6Mbps，4K 10Mbps。
+  function videoBps(longEdge) {
+    var n = Number(longEdge) || 1920;
+    if (n >= 3000) return 10000000;
+    if (n >= 2000) return 6000000;
+    return 3000000;
+  }
+  function even(n) { return Math.max(2, Math.round(n / 2) * 2); }
+  function mmss2(sec) {
+    sec = Math.max(0, Math.round(sec));
+    var m = Math.floor(sec / 60), ss = sec % 60;
+    return ('0' + m).slice(-2) + ':' + ('0' + ss).slice(-2);
   }
   function bytes(n) {
     n = Number(n) || 0;
@@ -130,6 +166,11 @@
     if (!s) return;
     S = null;
     s.dead = true;
+    if (s.onResize) {
+      try { window.removeEventListener('resize', s.onResize); } catch (e) {}
+      try { window.removeEventListener('orientationchange', s.onResize); } catch (e) {}
+      s.onResize = null;
+    }
     if (s.previewUrl) { try { URL.revokeObjectURL(s.previewUrl); } catch (e) {} s.previewUrl = ''; }
     if (s.timer) { clearInterval(s.timer); s.timer = 0; }
     try { if (s.recorder && s.recorder.state === 'recording') s.recorder.stop(); } catch (e) {}
@@ -180,9 +221,10 @@
       mode: opts.mode === 'video' ? 'video' : 'photo',
       canBoth: opts.mode !== 'photo' && opts.mode !== 'video',
       facing: opts.facing === 'user' ? 'user' : 'environment',
-      res: readRes(), zoom: 1, dead: false, preview: !!opts.preview,
+      res: readRes(), ratio: readRatio(), zoom: 1, dead: false, preview: !!opts.preview,
       stream: null, track: null, recorder: null, chunks: [], mic: null,
       recBytes: 0, recStart: 0, timer: 0, lastPhotoAt: 0,
+      stageW: 0, stageH: 0,
       recCanvas: null, recRaf: 0, recCanvasStream: null,
       previewEl: null, previewUrl: '', previewBlob: null, previewInfo: null, previewKind: '',
       sending: false
@@ -197,7 +239,7 @@
     var top = el('div', 'position:relative;z-index:6;display:flex;align-items:center;gap:10px;' +
       'padding:10px 12px;background:linear-gradient(rgba(0,0,0,.72),transparent);flex-shrink:0');
     var resSel = document.createElement('select');
-    resSel.title = '拍照分辨率';
+    resSel.title = '拍照/录像分辨率';
     resSel.style.cssText = 'flex-shrink:0;height:30px;padding:0 6px;border:1px solid rgba(255,255,255,.22);' +
       'border-radius:8px;background:rgba(0,0,0,.45);color:#e8e8ee;font:12px/1 inherit;outline:none';
     RES_OPTS.forEach(function (o) {
@@ -231,17 +273,35 @@
       });
     }
 
-    var stage = s.stage = el('div', 'position:relative;flex:1;min-height:0;width:100%;overflow:hidden;background:#000');
+    // v3.17：比例栏（取景框和成片共用同一比例）
+    var ratioBar = el('div', 'position:relative;z-index:6;display:flex;align-items:center;justify-content:center;' +
+      'gap:6px;padding:0 10px 8px;overflow-x:auto;background:linear-gradient(rgba(0,0,0,.55),transparent);' +
+      'flex-shrink:0;-webkit-overflow-scrolling:touch');
+    var ratioBtns = {};
+    RATIO_OPTS.forEach(function (o) {
+      var b = el('button', 'flex:0 0 auto;min-width:50px;height:30px;padding:0 10px;border:1px solid rgba(255,255,255,.24);' +
+        'border-radius:999px;background:rgba(0,0,0,.42);color:#cfcfd8;font:12px/1 inherit;cursor:pointer', o.l);
+      b.setAttribute('data-ratio', o.k);
+      b.onclick = function () { setRatio(o.k); };
+      ratioBtns[o.k] = b;
+      ratioBar.appendChild(b);
+    });
+
+    // v3.17：stageWrap 负责黑边留白，stage 是严格按比例计算的取景框；
+    // 框内才是最终成片范围，变焦只裁框内画面，不再缩放整个页面。
+    var stageWrap = s.stageWrap = el('div', 'position:relative;flex:1;min-height:0;width:100%;overflow:hidden;' +
+      'background:#000;display:flex;align-items:center;justify-content:center');
+    var stage = s.stage = el('div', 'position:relative;flex:0 0 auto;overflow:hidden;background:#000;' +
+      'box-shadow:0 0 0 1px rgba(255,255,255,.18)');
     var v = s.v = document.createElement('video');
     v.autoplay = true;
     v.muted = true;
     v.playsInline = true;
     v.setAttribute('playsinline', '');
     v.setAttribute('webkit-playsinline', '');
-    // v3.15：preview 与裁切统一用 cover。stage 负责遮住超出部分，
-    // video 只做 transform: scale()，取景框和最终输出使用同一套几何。
-    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;object-fit:cover;' +
-      'transition:transform .12s;transform-origin:center center';
+    // 宽高由 applyFrame() 按源尺寸、目标比例和变焦倍数算，居中裁切
+    v.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#000;' +
+      'max-width:none;max-height:none;pointer-events:none';
     stage.appendChild(v);
 
     var toastEl = s.toastEl = el('div', 'position:absolute;left:50%;top:64px;transform:translateX(-50%);z-index:8;' +
@@ -265,17 +325,20 @@
     zIn.title = '放大';
     zWrap.append(zOut, zRange, zLab, zIn);
 
-    // 底栏：左翻转，中间快门（拍照 / 开始-停止录像），右占位保持快门居中
+    // 录像状态：放在取景框顶部，显示已录时长 + 当前体积 + 比例
+    var recLabel = s.recLabel = el('div', 'position:absolute;left:50%;top:10px;transform:translateX(-50%);' +
+      'z-index:7;padding:5px 11px;border-radius:999px;background:rgba(210,60,60,.86);color:#fff;' +
+      'font:11px/1.5 ui-monospace,monospace;display:none;white-space:nowrap;pointer-events:none', '● 00:00 · 0.0 MB');
+    stage.appendChild(recLabel);
+
+    // 底栏：左翻转，右侧快门（拍照 / 开始-停止录像）
     var bar = s.bar = el('div', 'position:relative;z-index:6;display:flex;align-items:center;justify-content:space-between;' +
-      'gap:20px;padding:14px 20px calc(22px + env(safe-area-inset-bottom,0px));' +
+      'gap:0;padding:14px 20px calc(22px + env(safe-area-inset-bottom,0px));' +
       'background:linear-gradient(transparent,rgba(0,0,0,.8));flex-shrink:0');
     var flip = s.flip = el('button', 'width:52px;height:52px;padding:0;border:1px solid rgba(255,255,255,.26);' +
       'border-radius:50%;background:rgba(28,28,34,.66);color:#fff;font:20px/1 inherit;cursor:pointer;flex:0 0 auto', '🔄');
     flip.title = '前后摄像头';
-    var recLabel = el('div', 'position:absolute;left:50%;top:-34px;transform:translateX(-50%);' +
-      'z-index:7;padding:4px 10px;border-radius:999px;background:rgba(210,60,60,.82);color:#fff;' +
-      'font:11px/1.5 ui-monospace,monospace;display:none;white-space:nowrap', '● 0:00 / 0.0 MB');
-    var spacer = el('div', 'width:52px;height:52px;flex:0 0 auto');
+    var spacer = el('div', 'flex:1;height:52px');
     var shot = s.shot = el('button', 'width:76px;height:76px;padding:0;border:4px solid rgba(255,255,255,.88);' +
       'border-radius:50%;background:#fff;color:#111;font:700 14px/1 inherit;cursor:pointer;flex:0 0 auto;' +
       'box-shadow:0 0 0 4px rgba(0,0,0,.28),0 6px 20px rgba(0,0,0,.5);transition:transform .12s,background .12s', '');
@@ -285,20 +348,22 @@
     shot.onpointerup = function () { shot.style.transform = ''; };
     shot.onpointercancel = function () { shot.style.transform = ''; };
 
-    bar.append(flip, shot, spacer);
+    bar.append(flip, spacer, shot);
 
     var failBox = s.failBox = el('div', 'position:absolute;inset:0;z-index:9;display:none;place-items:center;' +
       'padding:28px;text-align:center;color:#c9c9d2;font:13px/1.9 inherit;white-space:pre-wrap;background:#000');
 
     root.append(top);
     if (modeBar) root.append(modeBar);
-    root.append(stage, toastEl, zWrap, recLabel, bar, failBox);
+    root.append(ratioBar, stageWrap, toastEl, zWrap, bar, failBox);
+    stageWrap.appendChild(stage);
     document.body.append(root);
 
     // ── 打开摄像头 ──
     function constraints() {
+      // 请求 4:3 的传感器尺寸，不锁 16:9；具体取景比例由 stage / srcRect 裁切。
       var r = s.res;
-      var h = Math.round(r * 9 / 16);
+      var h = Math.round(r * 3 / 4);
       return {
         video: {
           facingMode: { ideal: s.facing },
@@ -344,36 +409,112 @@
       });
     }
 
+    function targetAspect() {
+      for (var i = 0; i < RATIO_OPTS.length; i++) {
+        if (RATIO_OPTS[i].k === s.ratio && RATIO_OPTS[i].w) return RATIO_OPTS[i].w / RATIO_OPTS[i].h;
+      }
+      var vw = Number(v.videoWidth) || 0, vh = Number(v.videoHeight) || 0;
+      return vw && vh ? vw / vh : 16 / 9;
+    }
+
+    // 取景框按目标比例 layout；框外留黑边，框内就是最终输出。
+    function layoutStage() {
+      if (!s.stage || s.dead) return;
+      var aw = stageWrap.clientWidth, ah = stageWrap.clientHeight;
+      if (!aw || !ah) return;
+      var ar = targetAspect();
+      var w = aw, h = w / ar;
+      if (h > ah) { h = ah; w = h * ar; }
+      w = Math.max(2, Math.floor(w));
+      h = Math.max(2, Math.floor(h));
+      s.stageW = w; s.stageH = h;
+      stage.style.width = w + 'px';
+      stage.style.height = h + 'px';
+      applyFrame();
+    }
+
     function applyZoom(z) {
       s.zoom = Math.max(1, Math.min(4, Number(z) || 1));
       zLab.textContent = s.zoom.toFixed(1) + '×';
       zRange.value = String(s.zoom);
-      v.style.transform = s.zoom > 1.001 ? 'scale(' + s.zoom + ')' : '';
+      applyFrame();
     }
-    // 当前屏幕实际看到的源区域。object-fit:cover 先按 stage 比例裁一次，
-    // 再叠加 transform:scale(zoom)；拍照 / 录像都从这里取，预览和成片才会一致。
-    function cropRect() {
+
+    // 当前取景框对应的源区域：先按目标比例中心裁切，再按 zoom 向中心收窄。
+    // 预览的 video 尺寸和拍照/录像 drawImage 都用这一套几何，保证所见即所得。
+    function srcRect() {
       var vw = Number(v.videoWidth) || 0, vh = Number(v.videoHeight) || 0;
-      var r;
-      try { r = stage.getBoundingClientRect(); } catch (e) { return null; }
-      var stw = Number(r.width) || 0, sth = Number(r.height) || 0;
-      if (!vw || !vh || !stw || !sth) return null;
-      var cover = Math.max(stw / vw, sth / vh);
-      var scale = cover * Math.max(1, s.zoom);
-      var sw = Math.min(vw, stw / scale);
-      var sh = Math.min(vh, sth / scale);
+      if (!vw || !vh) return null;
+      var ar = targetAspect();
+      var sar = vw / vh;
+      var bw, bh;
+      if (sar > ar) { bh = vh; bw = vh * ar; }
+      else { bw = vw; bh = vw / ar; }
+      var z = Math.max(1, s.zoom);
+      var sw = bw / z, sh = bh / z;
       if (sw < 2 || sh < 2) return null;
       return {
         sx: (vw - sw) / 2, sy: (vh - sh) / 2,
-        sw: sw, sh: sh, w: stw, h: sth
+        sw: sw, sh: sh,
+        vw: vw, vh: vh, ar: ar
       };
     }
+
+    // 把完整源画面按「取景框/裁切区」的倍率铺开，stage 的 overflow 负责裁切。
+    function applyFrame() {
+      if (!s.stageW || !s.stageH) return;
+      var r = srcRect();
+      if (!r) return;
+      var scale = s.stageW / r.sw;
+      v.style.width = (r.vw * scale) + 'px';
+      v.style.height = (r.vh * scale) + 'px';
+    }
+
+    function updateRatio() {
+      Object.keys(ratioBtns).forEach(function (k) {
+        var on = k === s.ratio;
+        ratioBtns[k].style.background = on ? '#fff' : 'rgba(0,0,0,.42)';
+        ratioBtns[k].style.color = on ? '#111' : '#cfcfd8';
+        ratioBtns[k].style.borderColor = on ? '#fff' : 'rgba(255,255,255,.24)';
+      });
+    }
+
+    function setRatio(k) {
+      if (s.recorder && s.recorder.state === 'recording') {
+        toast(s, '录像中不能切换比例', true);
+        return;
+      }
+      s.ratio = k;
+      writeRatio(k);
+      s.zoom = 1;
+      updateRatio();
+      layoutStage();
+      applyZoom(1);
+      toast(s, '比例：' + ratioLabel(k));
+    }
+
+    function onResize() {
+      layoutStage();
+      applyZoom(s.zoom);
+    }
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    s.onResize = onResize;
+
+    v.onloadedmetadata = function () { layoutStage(); applyZoom(s.zoom); };
+    v.onresize = function () { layoutStage(); applyZoom(s.zoom); };
+
     zOut.onclick = function () { applyZoom(s.zoom - 0.2); };
     zIn.onclick = function () { applyZoom(s.zoom + 0.2); };
     zRange.oninput = function () { applyZoom(parseFloat(zRange.value)); };
 
     resSel.onchange = function () {
-      s.res = parseInt(resSel.value, 10) || 2560;
+      if (s.recorder && s.recorder.state === 'recording') {
+        resSel.value = String(s.res);
+        toast(s, '录像中不能切换分辨率', true);
+        return;
+      }
+      s.res = parseInt(resSel.value, 10) || 1920;
       writeRes(s.res);
       toast(s, '分辨率：' + resLabel(s.res) + '（' + s.res + 'px）');
       if (!s.recorder) startStream();
@@ -583,7 +724,7 @@
       shot.style.transform = 'scale(.9)';
       setTimeout(function () { shot.style.transform = ''; }, 140);
 
-      var cr = cropRect();
+      var cr = srcRect();
       if (!cr) { toast(s, '相机还没准备好', true); return; }
       var sw = cr.sw, sh = cr.sh;
       var scale = Math.min(1, s.res / Math.max(sw, sh));
@@ -621,22 +762,24 @@
       micP.then(function (mic) {
         if (s.dead) { if (mic) mic.getTracks().forEach(function (t) { t.stop(); }); return; }
         s.mic = mic || null;
-        // v3.15：录像也走和预览一致的裁切。把当前可见区域逐帧画到隐藏 canvas，
-        // 再用 captureStream 交给 MediaRecorder；不支持时退回原始摄像头流。
+        // v3.17：取景框 = 成片比例；逐帧从 srcRect 裁切，变焦/比例与预览一致。
         var capture = s.stream.getVideoTracks().slice(0);
         var useCanvas = false;
-        var cr = cropRect();
+        var bps = videoBps(s.res);
+        var cr = srcRect();
         if (cr && window.HTMLCanvasElement && HTMLCanvasElement.prototype.captureStream) {
-          var outScale = Math.min(1, 1920 / Math.max(cr.sw, cr.sh));
-          var cw = Math.max(2, Math.round(cr.sw * outScale / 2) * 2);
-          var ch = Math.max(2, Math.round(cr.sh * outScale / 2) * 2);
+          var longEdge = Math.min(s.res, 3840);
+          var outScale = Math.min(1, longEdge / Math.max(cr.sw, cr.sh));
+          var cw = even(cr.sw * outScale);
+          var ch = even(cr.sh * outScale);
+          bps = videoBps(Math.max(cw, ch));
           var cv = document.createElement('canvas');
           cv.width = cw; cv.height = ch;
           var ctx = cv.getContext('2d');
           if (ctx) {
             var draw = function () {
               if (!s || s.dead || !s.recCanvas) return;
-              var r2 = cropRect();
+              var r2 = srcRect();
               if (r2) {
                 try { ctx.drawImage(v, r2.sx, r2.sy, r2.sw, r2.sh, 0, 0, cw, ch); } catch (e) {}
               }
@@ -660,7 +803,9 @@
         }
         if (!useCanvas) {
           capture = s.stream.getVideoTracks().slice(0);
-          if (s.zoom > 1.001) toast(s, '当前浏览器不支持变焦录像，将录原始画面', true);
+          if (s.zoom > 1.001 || s.ratio !== 'auto') {
+            toast(s, '当前浏览器不支持裁切录像，将录原始画面', true);
+          }
         }
         var tracks = capture;
         if (s.mic) tracks = tracks.concat(s.mic.getAudioTracks());
@@ -669,8 +814,8 @@
         var isMp4 = /mp4/.test(mime);
         try {
           s.recorder = new MediaRecorder(mixed, mime ? {
-            mimeType: mime, videoBitsPerSecond: V_BPS, audioBitsPerSecond: 96000
-          } : { videoBitsPerSecond: V_BPS, audioBitsPerSecond: 96000 });
+            mimeType: mime, videoBitsPerSecond: bps, audioBitsPerSecond: 96000
+          } : { videoBitsPerSecond: bps, audioBitsPerSecond: 96000 });
         } catch (e) {
           s.recorder = null;
           stopCanvasRec(s);
@@ -731,11 +876,17 @@
         }
         shot.disabled = false;
         updateShutter();
+        recLabel.textContent = '● 00:00 · 0.0 MB · ' + ratioLabel(s.ratio);
         recLabel.style.display = 'block';
         if (!s.mic) toast(s, '麦克风不可用，将无声录制', true);
         s.timer = setInterval(function () {
           if (!s.recorder || s.recorder.state !== 'recording') return;
-          recLabel.textContent = '● ' + mmss((Date.now() - s.recStart) / 1000) + ' / ' + bytes(s.recBytes);
+          var sec = (Date.now() - s.recStart) / 1000;
+          recLabel.textContent = '● ' + mmss2(sec) + ' · ' + bytes(s.recBytes) + ' · ' + ratioLabel(s.ratio);
+          if (sec >= MAX_SEC) {
+            toast(s, '已到 ' + MAX_SEC + ' 秒上限，自动停止', true);
+            stopRec();
+          }
         }, 500);
       });
     }
@@ -746,6 +897,9 @@
       try { if (s.recorder && s.recorder.state === 'recording') s.recorder.stop(); } catch (e) {}
     }
 
+    updateRatio();
+    layoutStage();
+    setTimeout(layoutStage, 0);
     startStream();
     applyZoom(1);
     return { close: close };
@@ -758,6 +912,10 @@
     res: readRes,
     resLabel: resLabel,
     setRes: writeRes,
-    RES: RES_OPTS
+    ratio: readRatio,
+    ratioLabel: ratioLabel,
+    setRatio: writeRatio,
+    RES: RES_OPTS,
+    RATIO: RATIO_OPTS
   };
 })();

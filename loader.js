@@ -155,7 +155,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.16';
+  var TAG = '3.17';
 
   // 把自己这份源码存进 localStorage，供 44 字符短串 eval 用。
   function cacheSelf(done) {
@@ -1197,7 +1197,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.16', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.17', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

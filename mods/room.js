@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.16 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.17 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -951,7 +951,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.16';
+  badge.textContent = 'v3.17';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板
@@ -2002,7 +2002,7 @@
     if (camQueue) { camQueue.push(cb); return; }
     camQueue = [cb];
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.16';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.17';
     sc.onload = function () {
       var q = camQueue || [];
       camQueue = null;
@@ -2126,7 +2126,7 @@
       tipText(msg || '相册模块加载失败（检查网络 / CDN）', 'warn');
     }
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.16';
+    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.17';
     sc.onload = function () { if (window.__fhAlbum) loaded(); else fail(); };
     sc.onerror = function () {
       if (window.__fhLoadMod) {
