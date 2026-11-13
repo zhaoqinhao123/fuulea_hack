@@ -1,4 +1,4 @@
-﻿/* fuulea_hack loader — 二级面板（学习/查看/工具/AI/便签）+ 拖动 + 小窗 */
+/* fuulea_hack loader — 二级面板（学习/查看/工具/AI/便签）+ 拖动 + 小窗 */
 (function () {
   // 破上限：页面的分段表只有 4 项，补到 8 项后第 5 只起也能正常自动分级。
   // 规律：SEG_START[i+1] = SEG_START[i] + PET_REQ[i] + 100
@@ -153,22 +153,12 @@
     }
   }
 
-  // 再注入一次 = 隐形 / 显形。同一次注入常被页面重复触发（答题重渲染又跑一遍），
-  // 用时间戳挡掉 1.5 秒内的重复，否则会「闪一下就消失」。
-  var PRE = document.getElementById('__fh');
-  if (PRE) {
-    var now = Date.now();
-    if (window.__fhAt && (now - window.__fhAt) < 1500) return;
-    PRE.style.display = (PRE.style.display === 'none') ? '' : 'none';
-    window.__fhAt = now;
-    return;
-  }
-
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.12';
-  try { window.__fhTag = TAG; } catch (e) {}
-  (function () {
+  var TAG = '3.13.1';
+
+  // 把自己这份源码存进 localStorage，供 44 字符短串 eval 用。
+  function cacheSelf() {
     try {
       if (localStorage.getItem('fhV') === TAG && localStorage.getItem('fhL')) return;
       // 主 CDN 在国内常被重置，按顺序换镜像重试
@@ -192,13 +182,37 @@
         x.send();
       })();
     } catch (e) {}
-  })();
+  }
+
+  // 再注入一次 = 隐形 / 显形。同一次注入常被页面重复触发（答题重渲染又跑一遍），
+  // 用时间戳挡掉 1.5 秒内的重复，否则会「闪一下就消失」。
+  // 注意：面板已在页面上时，新注入只会切显示/隐藏，不会替换已加载的旧代码。
+  // 所以版本不一致时必须明说，否则用户会以为「注入没生效」。
+  var PRE = document.getElementById('__fh');
+  if (PRE) {
+    var now = Date.now();
+    if (window.__fhAt && (now - window.__fhAt) < 1500) return;
+    var running = window.__fhTag || '';
+    if (running && running !== TAG) {
+      fhToast('注入的是 v' + TAG + '，页面还跑着 v' + running + '：刷新页面（F5）后再注入一次');
+      cacheSelf();
+      PRE.style.display = '';
+      window.__fhAt = now;
+      return;
+    }
+    PRE.style.display = (PRE.style.display === 'none') ? '' : 'none';
+    window.__fhAt = now;
+    return;
+  }
+
+  try { window.__fhTag = TAG; } catch (e) {}
+  cacheSelf();
 
   var MOD_BASES = [
     'https://cdn.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
     'https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
     'https://gcore.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@' + TAG + '/',
-    'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/main/',
+    'https://raw.githubusercontent.com/zhaoqinhao123/fuulea_hack/v' + TAG + '/',
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
 
@@ -220,7 +234,7 @@
       MOD_BASES[1] + path + '?t=' + Date.now(),
       MOD_BASES[2] + path + '?t=' + Date.now(),
       MOD_BASES[3] + path + '?t=' + Date.now(),
-      MOD_BASES[4] + encodeURIComponent(path) + '/raw?ref=main&t=' + Date.now()
+      MOD_BASES[4] + encodeURIComponent(path) + '/raw?ref=v' + TAG + '&t=' + Date.now()
     ];
     var i = 0;
     (function next() {
@@ -1157,7 +1171,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.13', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.13.1', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

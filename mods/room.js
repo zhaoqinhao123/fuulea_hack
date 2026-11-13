@@ -848,7 +848,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.13';
+  badge.textContent = 'v3.13.1';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板

@@ -1,4 +1,4 @@
-﻿# fuulea_hack
+# fuulea_hack
 
 《文言诗文·课下注释闯关》的单文件页面补丁集。每个功能一个独立脚本，由 `loader.js` 拉起一个浮动面板按需加载。
 
@@ -7,10 +7,10 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.12/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.13.1/loader.js'">
 ```
 
-154 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
+157 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
 
 > 注入串必须带 `https:` 协议。v3.2.1 及更早的 README 示例是不带协议的 `//fastly...`，页面本身用 `file://` 打开时，浏览器会把 `//fastly.jsdelivr.net/...` 解析成 `file://fastly.jsdelivr.net/...`，于是报 `net::ERR_FILE_NOT_FOUND`，插件根本不加载。
 
@@ -28,7 +28,25 @@
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
 
-## v3.13
+## 注入后没反应 / 还是旧版？
+
+按这几条自查（v3.13.1 起面板会自己报警）：
+
+1. **页面已经开过面板**：再注入一次是「隐藏 / 显形」的开关（设计如此），不会把已加载的旧代码换成新代码。要升级必须**先刷新页面**（F5 / 下拉刷新）让面板消失，再贴注入串。
+2. **版本号对不上**：注入串里的 `@3.13.1` 要和仓库最新 tag 一致（工具 → 🔄 版本更新 → 查询最新版，会自动生成正确串）。
+3. **CDN 打不开**：`fastly.jsdelivr.net` 在部分网络会被重置。把串里的 `fastly` 换成 `cdn` 或 `gcore` 再试；三者都不通就换网络。
+4. **44 字符短串没反应**：短串读的是 `localStorage.fhL`，只在**同一个浏览器、同一个站点、且这台机器此前成功注入过一次**时有效。换浏览器、清过缓存、换了域名（`file://` ↔ `https://`）之后都必须先贴一次长串。
+5. **页面把 HTML 转义了**：面板不出现时按 F12 看 Console，有没有 `Refused to load the script` / `net::ERR_...`。
+
+v3.13.1 起，若注入的是新版本而页面还跑着旧版本，面板会直接弹提示「注入的是 v3.13.1，页面还跑着 v3.13：刷新页面（F5）后再注入一次」，不会再静默地什么也不发生。
+
+## v3.13.1
+
+- **修「注入 v3.13 后还是旧功能、像没注入」**：`loader.js` 里的版本标记 `TAG` 忘了跟着升到 3.13，于是 v3.13 的 loader 仍然把所有模块（`room.js` / `cam.js` / `media.js` / `ai.js` …）从 `@3.12` 拉——面板能出来，但新功能一个都没有；自缓存判断也因此恒真，旧 loader 永远不刷新。现在 `TAG = '3.13.1'`。
+- **注入版本 ≠ 运行版本时明确提示**（以前是静默切换显示/隐藏，看着就像「注入失败」）。
+- **回退源锁到版本 tag**：raw.githubusercontent 与 GitLab API 两条回退路径以前固定用 `main`（停在 v3.9），失败回退时会悄悄加载好几个版本前的代码；现在按 `v3.13.1` tag 取。
+- **为什么不是直接改 v3.13**：jsDelivr 对带版本号的 URL 回 `Cache-Control: immutable, max-age=31536000`，`@3.13` 一旦被浏览器/边缘节点缓存就再也刷不新（这次实测 `@3.12` 的内容改了、CDN 仍在发旧的）。只能开新版本号。
+- 版本号 `TAG` / AI 头栏 / 聊天室徽标 / 主面板标签统一升到 3.13.1。
 
 - **修「聊天室录的视频能发、但自己/别人/后台都看不了」**：真正原因不是容器选错，而是**下载回来的 Blob 类型不对**——`gitReq` 用 `responseType='blob'` 取 GitLab 的 raw 文件时，`Blob.type` 直接继承服务端 `Content-Type`（二进制常被回成 `application/octet-stream`/`text/plain`），`<video>`/`<audio>` 拿到这种 MIME 直接拒绝播放。所以以前换回 WebM 也一样看不了。现在 `loadMedia` 下载后按「消息里记的 mime → 文件扩展名」重新 `new Blob([...], {type})` 再缓存/播放，老消息（没记 mime）靠扩展名推断。
 - **录像容器改成 WebM(VP8/Opus) 优先、MP4 兜底**：Chrome 的 MediaRecorder 输出 fragmented MP4，再叠加 `start(500)` 分片拼 Blob，容易得到 moov 残缺的文件。现在 `mods/cam.js` 与 `mods/media.js` 统一优先 WebM；只有浏览器不支持 WebM（Safari）才用 MP4，且 **MP4 不分片**。
