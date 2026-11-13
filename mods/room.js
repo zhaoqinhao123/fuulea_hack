@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.13 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.14 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -726,7 +726,7 @@
     'background:rgba(240,90,70,.2);color:#ffc3b0;font:10.5px/1 inherit;padding:5px 9px;cursor:pointer}',
     '#__rm .rm-err button:hover{background:rgba(240,90,70,.34)}',
     '#__rm .rm-compose{display:flex;align-items:flex-end;gap:5px;margin-top:4px}',
-    '#__rm .rm-ta{flex:1;min-width:0;min-height:36px;max-height:96px;padding:8px 10px;resize:none;border:1px solid var(--line);',
+    '#__rm .rm-ta{flex:1;min-width:0;min-height:54px;max-height:96px;padding:8px 10px;resize:none;overflow-y:auto;border:1px solid var(--line);',
     'border-radius:9px;background:var(--input);color:var(--fg);font:13px/1.45 inherit;outline:none}',
     '#__rm .rm-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,126,248,.14)}',
     '#__rm .rm-ta:disabled{opacity:.55;cursor:not-allowed}',
@@ -848,7 +848,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.13.1';
+  badge.textContent = 'v3.14';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板
@@ -937,7 +937,7 @@
   compose.className = 'rm-compose';
   var ta = document.createElement('textarea');
   ta.className = 'rm-ta';
-  ta.rows = 1;
+  ta.rows = 2;
   ta.maxLength = 8000;
   ta.placeholder = '说点什么…（Enter 发送 / Shift+Enter 换行）';
   var sendBtn = document.createElement('button');
@@ -966,8 +966,13 @@
   var camBtn = document.createElement('button');
   camBtn.className = 'rm-cbtn';
   camBtn.textContent = '📷';
-  camBtn.title = '拍照 / 录像（直接发送）';
-  compose.append(micBtn, camBtn, fileBtn, recBtn, ta, sendBtn);
+  camBtn.title = '拍照 / 录像（可预览后发送）';
+  // v3.14：本机相册，选已拍好的图片 / 视频发送
+  var albumBtn = document.createElement('button');
+  albumBtn.className = 'rm-cbtn';
+  albumBtn.textContent = '🖼';
+  albumBtn.title = '从本机相册选择（拍照 / 录像会自动存进去）';
+  compose.append(micBtn, camBtn, albumBtn, fileBtn, recBtn, ta, sendBtn);
   foot.append(tip, compose, fileInput);
 
   var grip = document.createElement('div');
@@ -1696,7 +1701,6 @@
     } else {
       tipText('已登录 ');
       tipText(r.user, 'ok');
-      tipText(' · 消息写入 GitLab message/ · 30 秒自动刷新 · 只同步最近 24 小时的新消息，本地历史全保留');
       ta.disabled = false;
       ta.placeholder = '以 ' + r.user + ' 的身份发言…（Enter 发送）';
       sendBtn.disabled = false;
@@ -1864,7 +1868,7 @@
     if (camQueue) { camQueue.push(cb); return; }
     camQueue = [cb];
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.13';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.14';
     sc.onload = function () {
       var q = camQueue || [];
       camQueue = null;
@@ -1905,31 +1909,41 @@
     im.src = url;
   }
   function sendCamBlob(blob, info, kind) {
-    if (!canSend()) {
-      updateAuth(); tipClear();
-      tipText('登录并配置 Token 后才能发照片 / 视频（拍到的还留在相机里，可先保存）', 'warn');
-      return;
-    }
-    info = info || {};
-    tipClear();
-    tipText(kind === 'image' ? '正在发送照片…' : '正在发送视频…');
-    shrinkForUpload(blob, kind, function (err, out) {
-      if (err) { tipText(err, 'warn'); return; }
-      if (out.size > 25 * 1048576) { tipText('文件超过 25MB 上限（' + fmtSize(out.size) + '）', 'warn'); return; }
-      uploadBlob(out, info.name || (kind === 'image' ? 'photo.jpg' : 'record.webm'), function (e, path) {
-        if (e) {
-          tipClear();
-          tipText((kind === 'image' ? '照片' : '视频') + '上传失败：' + e + '（可重拍或换小一点的分辨率）', 'warn');
-          return;
+    return new Promise(function (resolve, reject) {
+      if (!canSend()) {
+        updateAuth(); tipClear();
+        tipText('登录并配置 Token 后才能发照片 / 视频（拍到的还留在相机里，可先保存）', 'warn');
+        reject(new Error('未登录或未配置 Token'));
+        return;
+      }
+      info = info || {};
+      tipClear();
+      tipText(kind === 'image' ? '正在发送照片…' : '正在发送视频…');
+      shrinkForUpload(blob, kind, function (err, out) {
+        if (err) { tipText(err, 'warn'); reject(new Error(err)); return; }
+        if (out.size > 25 * 1048576) {
+          var big = '文件超过 25MB 上限（' + fmtSize(out.size) + '）';
+          tipText(big, 'warn'); reject(new Error(big)); return;
         }
-        postMediaMsg({
-          at: Date.now(), nick: myName(), owner: ownerTag(), text: '', image: '',
-          file: path, kind: kind, name: info.name || path.split('/').pop(),
-          size: out.size, mime: out.type || (kind === 'image' ? 'image/jpeg' : 'video/webm'),
-          dur: kind === 'video' ? (info.dur || 0) : 0
+        uploadBlob(out, info.name || (kind === 'image' ? 'photo.jpg' : 'record.webm'), function (e, path) {
+          if (e) {
+            tipClear();
+            tipText((kind === 'image' ? '照片' : '视频') + '上传失败：' + e + '（可重拍或换小一点的分辨率）', 'warn');
+            reject(new Error(e));
+            return;
+          }
+          postMediaMsg({
+            at: Date.now(), nick: myName(), owner: ownerTag(), text: '', image: '',
+            file: path, kind: kind, name: info.name || path.split('/').pop(),
+            size: out.size, mime: out.type || (kind === 'image' ? 'image/jpeg' : 'video/webm'),
+            dur: kind === 'video' ? (info.dur || 0) : 0
+          }).then(function (ok) {
+            if (!ok) { reject(new Error('消息写入失败')); return; }
+            tipClear();
+            tipText(kind === 'image' ? '照片已发送' : '视频已发送', 'ok');
+            resolve(path);
+          });
         });
-        tipClear();
-        tipText(kind === 'image' ? '照片已发送' : '视频已发送', 'ok');
       });
     });
   }
@@ -1944,8 +1958,9 @@
         window.__fhCam.open({
           title: '拍照 / 录像',
           mode: 'both',
-          onPhoto: function (b, info) { sendCamBlob(b, info, 'image'); },
-          onVideo: function (b, info) { sendCamBlob(b, info, 'video'); }
+          preview: true,
+          onPhoto: function (b, info) { return sendCamBlob(b, info, 'image'); },
+          onVideo: function (b, info) { return sendCamBlob(b, info, 'video'); }
         });
       } catch (e) {
         tipClear();
@@ -1954,6 +1969,131 @@
     });
   }
   camBtn.onclick = openRoomCam;
+
+  // ── v3.14 本机相册：选择已拍好的图片 / 视频发送 ──
+  var albumQueue = null;
+  function loadAlbum(cb) {
+    if (window.__fhAlbum) { cb(); return; }
+    if (albumQueue) { albumQueue.push(cb); return; }
+    albumQueue = [cb];
+    function loaded() {
+      var q = albumQueue || [];
+      albumQueue = null;
+      q.forEach(function (f) { try { f(); } catch (e) {} });
+    }
+    function fail(msg) {
+      albumQueue = null;
+      tipClear();
+      tipText(msg || '相册模块加载失败（检查网络 / CDN）', 'warn');
+    }
+    var sc = document.createElement('script');
+    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.14';
+    sc.onload = function () { if (window.__fhAlbum) loaded(); else fail(); };
+    sc.onerror = function () {
+      if (window.__fhLoadMod) {
+        try {
+          window.__fhLoadMod('mods/album.js', null, function () {
+            if (window.__fhAlbum) loaded(); else fail();
+          });
+          return;
+        } catch (e) {}
+      }
+      fail();
+    };
+    document.head.appendChild(sc);
+  }
+
+  function prepAlbumRecord(rec, compress) {
+    if (rec.kind === 'image' && compress) {
+      return compressImageFile(rec.blob).catch(function () { return rec.blob; });
+    }
+    return Promise.resolve(rec.blob);
+  }
+
+  function uploadAlbumRecord(rec, blob) {
+    return new Promise(function (resolve, reject) {
+      if (blob.size > 25 * 1048576) {
+        reject(new Error(rec.kind === 'video' ? '视频超过 25MB 上限（' + fmtSize(blob.size) + '）' : '图片超过 25MB 上限（' + fmtSize(blob.size) + '）'));
+        return;
+      }
+      uploadBlob(blob, rec.name || (rec.kind === 'image' ? 'photo.jpg' : 'record.webm'), function (e, path) {
+        if (e) { reject(new Error(e)); return; }
+        postMediaMsg({
+          at: Date.now(), nick: myName(), owner: ownerTag(), text: '', image: '',
+          file: path, kind: rec.kind === 'video' ? 'video' : 'image',
+          name: rec.name || path.split('/').pop(), size: blob.size,
+          mime: blob.type || rec.type || (rec.kind === 'image' ? 'image/jpeg' : 'video/webm'),
+          dur: rec.kind === 'video' ? (rec.dur || 0) : 0
+        }).then(function (ok) {
+          if (!ok) { reject(new Error('消息写入失败')); return; }
+          try { window.__fhAlbum.update(rec.id, { remotePath: path }); } catch (e) {}
+          resolve(path);
+        });
+      });
+    });
+  }
+
+  function sendAlbumRecord(rec, compress) {
+    return prepAlbumRecord(rec, compress).then(function (blob) {
+      return uploadAlbumRecord(rec, blob);
+    }).catch(function (err) {
+      // 图片上传失败时，给一次「压缩后再试」的机会；视频只提示大小/网络原因
+      if (rec.kind === 'image' && !compress && confirm('上传失败：' + (err && err.message ? err.message : err) + '\n\n压缩后重试？')) {
+        return sendAlbumRecord(rec, true);
+      }
+      throw err;
+    });
+  }
+
+  function sendAlbumRecords(records, opts) {
+    opts = opts || {};
+    var i = 0, sent = 0;
+    return new Promise(function (resolve, reject) {
+      function next() {
+        if (i >= records.length) {
+          tipClear();
+          tipText('已发送 ' + sent + ' 个文件', 'ok');
+          resolve(sent);
+          return;
+        }
+        var rec = records[i++];
+        tipClear();
+        tipText('正在上传 ' + (i) + '/' + records.length + '：' + (rec.name || '') + '…');
+        sendAlbumRecord(rec, !!opts.compress).then(function () {
+          sent++;
+          next();
+        }).catch(function (err) {
+          tipClear();
+          tipText('上传失败：' + (err && err.message ? err.message : err), 'warn');
+          reject(err);
+        });
+      }
+      next();
+    });
+  }
+
+  function openAlbumPicker() {
+    if (!canSend()) {
+      updateAuth(); tipClear();
+      tipText('登录并配置 Token 后才能发相册文件', 'warn');
+      return;
+    }
+    loadAlbum(function () {
+      if (!window.__fhAlbum) return;
+      window.__fhAlbum.ready().then(function () {
+        window.__fhAlbum.open({
+          mode: 'pick',
+          multiple: true,
+          owner: ownerTag(),
+          onPick: function (records, opts) { return sendAlbumRecords(records, opts); }
+        });
+      }).catch(function (e) {
+        tipClear();
+        tipText('打不开相册：' + (e && e.message ? e.message : e), 'warn');
+      });
+    });
+  }
+  albumBtn.onclick = openAlbumPicker;
 
   // ── v3.10 文件 / 语音 / 语音输入 ──
   var pendingFiles = [];
@@ -2166,7 +2306,7 @@
   function postMediaMsg(msg) {
     var path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
     msg.p = path;
-    gitPut(path, JSON.stringify(msg)).then(function (res) {
+    return gitPut(path, JSON.stringify(msg)).then(function (res) {
       if (!res.ok && res.status === 400 && /already exists/i.test(res.text || '')) {
         path = ROOM_DIR + '/' + stamp() + '-' + rand4() + '.json';
         msg.p = path;
@@ -2177,12 +2317,17 @@
       if (!res.ok) {
         var why = res.status === 401 || res.status === 403 ? 'Token 没有写权限' : ('HTTP ' + res.status);
         tipClear(); tipText('消息发送失败：' + why, 'warn');
-        return;
+        return false;
       }
       merge([msg]);
       saveCache();
       render(true);
       updateAuth();
+      return true;
+    }).catch(function (e) {
+      tipClear();
+      tipText('消息发送失败：' + (e && e.message ? e.message : e), 'warn');
+      return false;
     });
   }
 

@@ -22,6 +22,8 @@
   var K_PROFILES = 'fh:ai:profiles';    // v3.12：多份 API 配置
   var K_PROFILE = 'fh:ai:profileId';
   var K_MODE = 'fh:ai:mode';
+  var K_PROXY = 'fh:ai:proxy';          // v3.14：CORS 中转（Cloudflare Worker / 本机 proxy.js）
+  var K_ACTUAL = 'fh:ai:actualMode';    // 每个 API 地址自动探测到的协议
   var K_SESS = 'fh:ai:sessions';
   var K_SID = 'fh:ai:sid';
   var K_HIST_P = 'fh:ai:hist:';
@@ -47,23 +49,25 @@
   var cfg = {
     key: read(K_KEY, ''),
     base: read(K_BASE, 'https://api.deepseek.com'),
-    depth: read(K_DEPTH, 'high'),
+    depth: read(K_DEPTH, 'default'),
     theme: read(K_THEME, 'auto'),
     gitToken: read(K_GIT, ''),
     autoUpload: read(K_AUTO, '1') !== '0',
     model: read(K_MODEL, 'deepseek-flash'),
-    mode: read(K_MODE, 'chat'),
+    mode: read(K_MODE, 'auto'),
+    proxy: read(K_PROXY, ''),
     nick: read(K_NICK, '')
   };
   if (!/^https?:\/\//i.test(cfg.base)) cfg.base = 'https://api.deepseek.com';
-  if (['off', 'low', 'high', 'max'].indexOf(cfg.depth) < 0) cfg.depth = 'high';
+  if (cfg.depth === 'off') cfg.depth = 'none';
+  if (['default', 'none', 'low', 'medium', 'high', 'xhigh', 'max'].indexOf(cfg.depth) < 0) cfg.depth = 'default';
   if (['auto', 'dark', 'light'].indexOf(cfg.theme) < 0) cfg.theme = 'auto';
-  if (['chat', 'responses'].indexOf(cfg.mode) < 0) cfg.mode = 'chat';
+  if (['auto', 'chat', 'responses'].indexOf(cfg.mode) < 0) cfg.mode = 'auto';
   cfg.model = String(cfg.model || 'deepseek-flash').trim() || 'deepseek-flash';
   if (!cfg.nick) cfg.nick = '';
 
-  var MODE_NAME = { chat: '对话', responses: 'Responses' };
-  var DEPTH_NAME = { off: '关闭', low: '低', high: '高', max: '最大' };
+  var MODE_NAME = { auto: '自动', chat: '对话', responses: 'Responses' };
+  var DEPTH_NAME = { default: 'Default', none: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' };
 
   function cleanHist(a) {
     if (Object.prototype.toString.call(a) !== '[object Array]') return [];
@@ -342,7 +346,7 @@
       'will-change:transform;user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none}',
       '.ai-zoom .zhint{position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:10px;',
       'color:rgba(255,255,255,.45);pointer-events:none}',
-      '#__ai .ai-ta{flex:1;min-width:0;min-height:38px;max-height:120px;padding:9px 10px;resize:none;',
+      '#__ai .ai-ta{flex:1;min-width:0;min-height:54px;max-height:96px;padding:9px 10px;resize:none;',
       'border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);',
       'font:13px/1.5 inherit;outline:none}',
       '#__ai .ai-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,126,248,.13)}',
@@ -737,7 +741,7 @@
   title.append(document.createTextNode('AI 网页'));
   var ver = document.createElement('span');
   ver.className = 'ai-ver';
-  ver.textContent = 'v3.13.1';
+  ver.textContent = 'v3.14';
   title.append(ver);
   var badge = div('ai-badge', 'ds-41-f');
   var spacer = div('ai-spacer');
@@ -868,6 +872,25 @@
   baseIn.spellcheck = false;
   baseRow.append(baseLab, baseIn);
 
+  // v3.14：浏览器直连中转站会被 CORS 拦截；这里填 Cloudflare Worker / 本机 proxy.js
+  var proxyRow = div('ai-row');
+  var proxyLab = document.createElement('label');
+  proxyLab.textContent = 'CORS 代理';
+  var proxyIn = document.createElement('input');
+  proxyIn.className = 'ai-in';
+  proxyIn.placeholder = '可选：https://xxx.workers.dev（或含 {url} 的模板）';
+  proxyIn.value = cfg.proxy;
+  proxyIn.autocomplete = 'off';
+  proxyIn.spellcheck = false;
+  proxyIn.title = '留空则直连。中转站不支持 CORS 时填 Worker 地址；支持 {url} 占位符或直接写前缀。';
+  proxyRow.append(proxyLab, proxyIn);
+  proxyIn.onchange = function () {
+    cfg.proxy = String(proxyIn.value || '').trim();
+    save(K_PROXY, cfg.proxy);
+    syncProfile(true);
+    cfgMsg.textContent = cfg.proxy ? '已启用 CORS 代理：' + cfg.proxy : '已关闭 CORS 代理（直连）';
+  };
+
   var gitField = makeSecretRow('上传 Token', cfg.gitToken, 'GitLab Token（可选）', function (v) {
     cfg.gitToken = v;
     save(K_GIT, v);
@@ -997,10 +1020,11 @@
 
   var depthRow = div('ai-row');
   var depthLab = document.createElement('label');
-  depthLab.textContent = '思考深度';
+  depthLab.textContent = '思考';
   var depthSel = document.createElement('select');
   depthSel.className = 'ai-sel';
-  [['off', '关闭（最快，不显示思考）'], ['low', '低'], ['high', '高（默认）'], ['max', '最大']].forEach(function (o) {
+  depthSel.title = 'Default = 不传思考参数，由接口自行决定';
+  [['default', 'Default'], ['none', 'none'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']].forEach(function (o) {
     var op = document.createElement('option');
     op.value = o[0];
     op.textContent = o[1];
@@ -1033,7 +1057,7 @@
   modeLab.textContent = '接口';
   var modeSel = document.createElement('select');
   modeSel.className = 'ai-sel';
-  [['chat', 'Chat Completions（/chat/completions）'], ['responses', 'Responses（/v1/responses）']].forEach(function (o) {
+  [['auto', '自动（先 Chat，失败再试 Responses）'], ['chat', 'Chat Completions（/chat/completions）'], ['responses', 'Responses（/v1/responses）']].forEach(function (o) {
     var op = document.createElement('option');
     op.value = o[0];
     op.textContent = o[1];
@@ -1055,6 +1079,7 @@
       base: cfg.base,
       model: cfg.model,
       mode: cfg.mode,
+      proxy: cfg.proxy,
       models: (modelList || []).slice(0, 300)
     };
   }
@@ -1094,7 +1119,7 @@
     profTimer = setTimeout(function () {
       var p = profById(pid);
       if (!p) return;
-      p.key = s.key; p.base = s.base; p.model = s.model; p.mode = s.mode; p.models = s.models;
+      p.key = s.key; p.base = s.base; p.model = s.model; p.mode = s.mode; p.proxy = s.proxy; p.models = s.models;
       saveProfiles(now);
     }, now ? 0 : 400);
   }
@@ -1124,7 +1149,7 @@
             key: String(p.key || ''),
             base: /^https?:\/\//i.test(p.base || '') ? p.base : 'https://api.deepseek.com',
             model: String(p.model || 'deepseek-flash'),
-            mode: p.mode === 'responses' ? 'responses' : 'chat',
+            mode: p.mode === 'responses' ? 'responses' : (p.mode === 'auto' ? 'auto' : 'chat'),
             models: Object.prototype.toString.call(p.models) === '[object Array]' ? p.models.slice(0, 300) : []
           };
         });
@@ -1172,15 +1197,19 @@
     cfg.key = p.key || '';
     cfg.base = /^https?:\/\//i.test(p.base || '') ? p.base : 'https://api.deepseek.com';
     cfg.model = String(p.model || 'deepseek-flash').trim() || 'deepseek-flash';
-    cfg.mode = p.mode === 'responses' ? 'responses' : 'chat';
+    cfg.mode = ['auto', 'chat', 'responses'].indexOf(p.mode) >= 0 ? p.mode : 'auto';
+    // 旧配置没有 proxy 字段：保留当前代理，避免一换配置就被清空
+    if (Object.prototype.hasOwnProperty.call(p, 'proxy')) cfg.proxy = String(p.proxy || '').trim();
     modelList = Array.isArray(p.models) ? p.models.slice(0, 300) : [];
     save(K_KEY, cfg.key);
     save(K_BASE, cfg.base);
     save(K_MODEL, cfg.model);
     save(K_MODE, cfg.mode);
+    save(K_PROXY, cfg.proxy);
     save(K_MODELS, JSON.stringify(modelList));
     keyField.set(cfg.key);
     baseIn.value = cfg.base;
+    proxyIn.value = cfg.proxy;
     modelIn.value = cfg.model;
     modeSel.value = cfg.mode;
     rebuildModelSel(modelList);
@@ -1238,7 +1267,7 @@
 
   var hint = div('ai-hint', 'Key / Token 只存本机；配置可多份保存，有上传 Token 时会随加密配置同步到云端；图片上传到 ' + GIT_PROJ + ':' + GIT_BRANCH + '/media/<用户名>/。');
   var cfgMsg = div('ai-cfgmsg', '');
-  cfgBox.append(profRow, acctRow, keyField.row, baseRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
+  cfgBox.append(profRow, acctRow, keyField.row, baseRow, proxyRow, modelRow, modeRow, gitField.row, autoRow, themeRow, depthRow, hint, cfgMsg);
   paintProfiles();
   applyProfile(profileId, true);
 
@@ -1292,6 +1321,7 @@
   var micBtn = button('🎤', 'ai-ico ai-shot', '语音输入（语音识别转文字）');
   var ta = document.createElement('textarea');
   ta.className = 'ai-ta';
+  ta.rows = 2;
   ta.placeholder = '问点什么…（Enter 发送 / Shift+Enter 换行）';
   ta.maxLength = 8000;
   ta.spellcheck = false;
@@ -1329,87 +1359,82 @@
     return { el: ov, bar: bar, tit: tit, body: body };
   }
 
-  // ── 媒体库：IndexedDB 存原图/原视频，不压缩 ──
-  var DB_NAME = 'fh_media', DB_STORE = 'media', dbP = null;
-  function dbOpen() {
-    if (dbP) return dbP;
-    dbP = new Promise(function (res, rej) {
-      if (!window.indexedDB) { rej(new Error('当前浏览器没有 IndexedDB')); return; }
-      var r;
-      try { r = indexedDB.open(DB_NAME, 1); } catch (e) { rej(e); return; }
-      r.onupgradeneeded = function () {
-        var d = r.result;
-        if (!d.objectStoreNames.contains(DB_STORE)) {
-          try { d.createObjectStore(DB_STORE, { keyPath: 'id', autoIncrement: true }); } catch (e) {}
+  // ── 媒体库：独立 mods/album.js（fh_album），不再和音乐共用 fh_media ──
+  // 旧版相册写 fh_media 的 media 表；音乐模块用同名库 version 2 却不建 media 表，
+  // 导致 VersionError。album.js 只读旧库迁移一次，绝不升级/删除 fh_media。
+  var ALBUM_P = null;
+  function ensureAlbum(cb) {
+    if (window.__fhAlbum) {
+      if (cb) { try { cb(null, window.__fhAlbum); } catch (e) {} }
+      return Promise.resolve(window.__fhAlbum);
+    }
+    if (!ALBUM_P) {
+      ALBUM_P = new Promise(function (res, rej) {
+        var settled = false;
+        var timer = setTimeout(function () { finish(new Error('相册模块加载超时')); }, 12000);
+        function finish(err, a) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (err) { ALBUM_P = null; rej(err); } else res(a);
         }
-      };
-      r.onsuccess = function () { res(r.result); };
-      r.onerror = function () { rej(r.error || new Error('IndexedDB 打不开')); };
-    });
-    return dbP;
-  }
-  function dbAdd(rec) {
-    return dbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        var q = t.objectStore(DB_STORE).add(rec);
-        q.onsuccess = function () { res(q.result); };
-        q.onerror = function () { rej(q.error || new Error('写入失败')); };
+        function ok() {
+          if (window.__fhAlbum) finish(null, window.__fhAlbum);
+          else finish(new Error('相册模块未初始化'));
+        }
+        function fail() { finish(new Error('相册模块加载失败')); }
+        if (window.__fhLoadMod) {
+          try {
+            window.__fhLoadMod('mods/album.js', null, function (err) {
+              if (err) finish(err); else ok();
+            }, true);
+          } catch (e) { fail(); }
+        } else {
+          var s = document.createElement('script');
+          s.src = 'mods/album.js?v=3.14&t=' + Date.now();
+          s.onload = ok;
+          s.onerror = fail;
+          document.body.append(s);
+        }
       });
-    });
+    }
+    if (cb) {
+      ALBUM_P.then(function (a) { try { cb(null, a); } catch (e) {} },
+        function (e) { try { cb(e); } catch (e2) {} });
+    }
+    return ALBUM_P;
   }
   function dbAll() {
-    return dbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readonly');
-        var q = t.objectStore(DB_STORE).getAll();
-        q.onsuccess = function () { res(q.result || []); };
-        q.onerror = function () { rej(q.error || new Error('读取失败')); };
-      });
-    });
+    return ensureAlbum().then(function (a) { return a.list({ all: true }); });
   }
   function dbDel(id) {
-    return dbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        var q = t.objectStore(DB_STORE).delete(id);
-        q.onsuccess = function () { res(1); };
-        q.onerror = function () { rej(q.error || new Error('删除失败')); };
-      });
-    });
+    return ensureAlbum().then(function (a) { return a.remove(id); });
   }
   function saveMedia(blob, nameImage, extra) {
     if (!blob) return Promise.resolve(null);
-    return dbAdd({
-      name: nameImage || 'media',
-      type: blob.type || 'application/octet-stream',
-      size: blob.size,
-      at: Date.now(),
-      owner: ownerTag,
-      kind: /^video\//i.test(blob.type || '') ? 'video' : 'image',
-      blob: blob,
-      remotePath: (extra && extra.remotePath) || ''
-    }).catch(function (e) { cfgMsg.textContent = '存相册失败：' + (e && e.message ? e.message : e); return null; });
+    return ensureAlbum().then(function (a) {
+      return a.save(blob, {
+        name: nameImage || 'media',
+        type: blob.type || 'application/octet-stream',
+        size: blob.size,
+        owner: ownerTag,
+        kind: /^video\//i.test(blob.type || '') ? 'video' : 'image',
+        remotePath: (extra && extra.remotePath) || '',
+        source: (extra && extra.source) || '',
+        dur: (extra && extra.dur) || 0,
+        width: (extra && extra.width) || 0,
+        height: (extra && extra.height) || 0
+      });
+    }).catch(function (e) {
+      cfgMsg.textContent = '存相册失败：' + (e && e.message ? e.message : e);
+      return null;
+    });
   }
   function dbGet(id) {
-    return dbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readonly');
-        var q = t.objectStore(DB_STORE).get(id);
-        q.onsuccess = function () { res(q.result || null); };
-        q.onerror = function () { rej(q.error || new Error('读取失败')); };
-      });
-    });
+    return ensureAlbum().then(function (a) { return a.get(id); });
   }
   function dbPut(rec) {
-    return dbOpen().then(function (db) {
-      return new Promise(function (res, rej) {
-        var t = db.transaction(DB_STORE, 'readwrite');
-        var q = t.objectStore(DB_STORE).put(rec);
-        q.onsuccess = function () { res(q.result); };
-        q.onerror = function () { rej(q.error || new Error('写入失败')); };
-      });
-    });
+    return ensureAlbum().then(function (a) { return a.update(rec.id, rec); });
   }
 
   // ── GitLab 仓库 REST（聊天室 / 相册远端 / 探测共用，全前端） ──
@@ -2165,23 +2190,34 @@
   function probeApi() {
     var b = String(cfg.base || '').trim().replace(/\/+$/, '').replace(/\/(chat\/completions|responses|models)$/i, '');
     if (!/\/(v\d+)$/i.test(b)) b += '/v1';
-    var url = b + '/models';
+    var url = proxied(b + '/models');
     plog('探测 API：' + url + (cfg.key ? '（带 Key）' : '（无 Key）'));
     var t0 = Date.now();
-    gitReq('GET', url, null, false, true).then(function (r) {
-      plog('→ HTTP ' + r.status + ' · ' + (Date.now() - t0) + 'ms');
-      if (r.ok) {
+    var x = new XMLHttpRequest();
+    try {
+      x.open('GET', url, true);
+      if (cfg.key) x.setRequestHeader('Authorization', 'Bearer ' + cfg.key.trim());
+      x.timeout = 20000;
+    } catch (e) {
+      plog('✗ 无法发起请求：' + (e && e.message ? e.message : e));
+      return;
+    }
+    x.onload = function () {
+      var ms = Date.now() - t0;
+      plog('→ HTTP ' + x.status + ' · ' + ms + 'ms');
+      if (x.status >= 200 && x.status < 300) {
         var n = 0;
-        try {
-          var j = JSON.parse(r.text || '{}');
-          var arr = j.data || j.models || (Object.prototype.toString.call(j) === '[object Array]' ? j : []);
-          n = arr.length || 0;
-        } catch (e) {}
+        try { n = modelIds(JSON.parse(x.responseText || '{}')).length; } catch (e) {}
         plog('✓ 可用，模型 ' + n + ' 个（点 🔑 → 扫描 可载入列表）');
       } else {
-        plog('✗ ' + String(r.text || '').slice(0, 160));
+        plog('✗ ' + String(x.responseText || '').slice(0, 160));
       }
-    });
+    };
+    x.onerror = function () {
+      plog('✗ 网络/CORS 错误' + (cfg.proxy ? '' : '（中转站可能需要填「CORS 代理」）'));
+    };
+    x.ontimeout = function () { plog('✗ 探测超时'); };
+    try { x.send(); } catch (e2) { plog('✗ ' + (e2 && e2.message ? e2.message : e2)); }
   }
   function probeGit() {
     if (!cfg.gitToken) { plog('探测 GitLab：未填 Token，跳过'); return; }
@@ -2452,8 +2488,8 @@
     if (!statTxt) return;
     var m = cfg.model || 'deepseek-flash';
     if (m.length > 22) m = m.slice(0, 21) + '…';
-    statTxt.textContent = 'v3.13.1 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
-      ' · 思考 ' + (DEPTH_NAME[cfg.depth] || '高') + ' · 本会话 ' + history.length +
+    statTxt.textContent = 'v3.14 · ' + m + ' · ' + (MODE_NAME[cfg.mode] || '对话') +
+      ' · 思考 ' + (DEPTH_NAME[cfg.depth] || 'Default') + ' · 本会话 ' + history.length +
       ' 条 · 共 ' + sessions.filter(function (s) { return s.owner === ownerTag; }).length + ' 个对话';
     badge.textContent = m.length > 18 ? m.slice(0, 17) + '…' : m;
     badge.title = cfg.model + ' · ' + (MODE_NAME[cfg.mode] || '对话');
@@ -2628,7 +2664,9 @@
 
   function grow() {
     ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight || 38, 120) + 'px';
+    var h = Math.max(54, Math.min(ta.scrollHeight || 54, 96));
+    ta.style.height = h + 'px';
+    ta.style.overflowY = (ta.scrollHeight || 0) > 96 ? 'auto' : 'hidden';
   }
 
   function setBusy(b) {
@@ -2642,10 +2680,37 @@
     try { xhr.abort(); } catch (e) {}
   }
 
-  function endpoint() {
+  function baseKey() {
+    return String(cfg.base || '').trim().replace(/\/+$/, '').toLowerCase();
+  }
+  function actualModeFor(base) {
+    try {
+      var m = JSON.parse(read(K_ACTUAL, '{}'));
+      var v = m[String(base || '').trim().replace(/\/+$/, '').toLowerCase()];
+      return v === 'responses' ? 'responses' : (v === 'chat' ? 'chat' : '');
+    } catch (e) { return ''; }
+  }
+  function saveActualMode(base, mode) {
+    try {
+      var m = JSON.parse(read(K_ACTUAL, '{}'));
+      m[String(base || '').trim().replace(/\/+$/, '').toLowerCase()] = mode;
+      save(K_ACTUAL, JSON.stringify(m));
+    } catch (e) {}
+  }
+  function proxied(url) {
+    var p = String(cfg.proxy || '').trim();
+    if (!p) return url;
+    if (p.indexOf('{url}') >= 0) return p.replace(/\{url\}/g, encodeURIComponent(url));
+    if (/[?&]url=$/i.test(p)) return p + encodeURIComponent(url);
+    if (p.indexOf('?') >= 0) return p + '&url=' + encodeURIComponent(url);
+    return p.replace(/\/+$/, '') + '?url=' + encodeURIComponent(url);
+  }
+  function endpoint(mode) {
+    var m = mode || cfg.mode;
+    if (m === 'auto') m = actualModeFor(cfg.base) || 'chat';
     var b = String(cfg.base || '').trim().replace(/\/+$/, '');
     if (!b) b = 'https://api.deepseek.com';
-    if (cfg.mode === 'responses') {
+    if (m === 'responses') {
       if (/\/responses$/i.test(b)) return b;
       if (/\/chat\/completions$/i.test(b)) return b.replace(/\/chat\/completions$/i, '/responses');
       if (/\/v\d+$/i.test(b)) return b + '/responses';
@@ -2660,6 +2725,29 @@
     if (!b) b = 'https://api.deepseek.com';
     if (!/\/(v\d+)$/i.test(b)) b += '/v1';
     return b + '/models';
+  }
+  function modelsUrls() {
+    var b = String(cfg.base || '').trim().replace(/\/+$/, '').replace(/\/(chat\/completions|responses|models)$/i, '');
+    if (!b) b = 'https://api.deepseek.com';
+    var out = [];
+    function add(u) { if (u && out.indexOf(u) < 0) out.push(u); }
+    add(modelsUrl());
+    add(b + '/models');
+    var s = b.replace(/\/v\d+$/i, '');
+    add(s + '/models');
+    add(s + '/v1/models');
+    return out;
+  }
+  function modelIds(j) {
+    var a = null;
+    if (Object.prototype.toString.call(j) === '[object Array]') a = j;
+    else if (j && Object.prototype.toString.call(j.data) === '[object Array]') a = j.data;
+    else if (j && Object.prototype.toString.call(j.models) === '[object Array]') a = j.models;
+    else if (j && j.data && Object.prototype.toString.call(j.data.models) === '[object Array]') a = j.data.models;
+    if (!a) return [];
+    return a.map(function (m) {
+      return String(typeof m === 'string' ? m : (m && (m.id || m.name || m.model)) || '').trim();
+    }).filter(Boolean);
   }
 
   function apiError(status, raw) {
@@ -3439,28 +3527,32 @@
       });
     }
 
-    var payload;
-    if (cfg.mode === 'responses') {
-      payload = { model: cfg.model, input: responsesInput(apiMessages), stream: true };
-      if (cfg.depth !== 'off') payload.reasoning = { effort: cfg.depth === 'max' ? 'high' : cfg.depth };
-    } else {
-      payload = {
-        model: cfg.model,
-        messages: apiMessages,
-        stream: true
-      };
-      if (cfg.depth === 'off') {
-        payload.thinking = { type: 'disabled' };
+    var reqMode = cfg.mode === 'auto' ? (actualModeFor(cfg.base) || 'chat') : cfg.mode;
+    var noReason = false;
+
+    function buildPayload(mode) {
+      var officialDeepSeek = false;
+      try { officialDeepSeek = /(^|\.)deepseek\.com$/i.test(new URL(endpoint(mode)).hostname); } catch (e) {}
+      var p;
+      if (mode === 'responses') {
+        p = { model: cfg.model, input: responsesInput(apiMessages), stream: true };
+        // Default：完全不传思考参数，由接口自己决定
+        if (!noReason && cfg.depth !== 'default') p.reasoning = { effort: cfg.depth };
       } else {
-        payload.thinking = { type: 'enabled' };
-        payload.reasoning_effort = cfg.depth;
-      }
-      // 官方接口要求显式打开才会在流末尾返回 usage；中转地址不猜，避免 400
-      try {
-        if (/(^|\.)deepseek\.com$/i.test(new URL(endpoint()).hostname)) {
-          payload.stream_options = { include_usage: true };
+        p = { model: cfg.model, messages: apiMessages, stream: true };
+        if (!noReason && cfg.depth !== 'default') {
+          if (officialDeepSeek) {
+            p.thinking = { type: cfg.depth === 'none' ? 'disabled' : 'enabled' };
+            if (cfg.depth !== 'none') p.reasoning_effort = cfg.depth;
+          } else {
+            // 第三方中转只认 reasoning_effort，不认识 DeepSeek 的 thinking
+            p.reasoning_effort = cfg.depth;
+          }
         }
-      } catch (e) {}
+        // 官方接口要求显式打开才会在流末尾返回 usage；中转地址不猜，避免 400
+        if (officialDeepSeek) p.stream_options = { include_usage: true };
+      }
+      return p;
     }
 
     var content = '';
@@ -3611,7 +3703,7 @@
     }
     function handleJson(j) {
       if (!j || typeof j !== 'object') return;
-      if (cfg.mode === 'responses') handleResponsesJson(j);
+      if (reqMode === 'responses') handleResponsesJson(j);
       else handleChatJson(j);
     }
 
@@ -3652,7 +3744,7 @@
     function parseJson(raw) {
       try {
         var j = JSON.parse(raw);
-        if (cfg.mode === 'responses') {
+        if (reqMode === 'responses') {
           if (j.error) { err = errText(j.error, '接口返回错误'); return; }
           handleResponsesJson(j);
           if (!gotContent && !gotReason) {
@@ -3667,58 +3759,107 @@
       }
     }
 
-    setBusy(true);
-
-    xhr = new XMLHttpRequest();
-    try {
-      xhr.open('POST', endpoint(), true);
-      xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.setRequestHeader('Authorization', 'Bearer ' + cfg.key.trim());
-      xhr.timeout = 180000;
-    } catch (e) {
-      err = '无法发起请求：' + (e && e.message ? e.message : String(e));
-      finish();
-      return;
+    function resetAttempt() {
+      content = '';
+      reasoning = '';
+      gotContent = false;
+      gotReason = false;
+      done = false;
+      aborted = false;
+      err = '';
+      sseBuf = '';
+      lastLen = 0;
+      reqUsage = null;
+      reqStart = Date.now();
+      firstAt = 0;
+      ui.bubble.textContent = '正在思考…';
+      ui.bubble.classList.remove('err');
+      if (ui.thinkSum) ui.thinkSum.textContent = '';
+    }
+    function unsupportedText(s) {
+      return /unsupported|not found|不支持|仅提供|only.*responses|use.*responses|chat.?completions/i.test(String(s || ''));
     }
 
-    xhr.onprogress = function () { parseStream(false); };
-    xhr.onreadystatechange = function () {
-      if (xhr && xhr.readyState === 3) parseStream(false);
-    };
-    xhr.onload = function () {
-      if (done) return;
-      if (xhr.status >= 200 && xhr.status < 300) {
-        parseStream(true);
-        var raw = (xhr.responseText || '').trim();
-        if (!gotContent && !gotReason && raw && raw.charAt(0) === '{') parseJson(raw);
-        if (!gotContent && !gotReason && !err) err = '接口返回为空';
-      } else {
-        err = apiError(xhr.status, xhr.responseText || '');
+    function fire() {
+      var payload = buildPayload(reqMode);
+      var req = new XMLHttpRequest();
+      xhr = req;
+      try {
+        req.open('POST', proxied(endpoint(reqMode)), true);
+        req.setRequestHeader('Content-Type', 'application/json');
+        req.setRequestHeader('Authorization', 'Bearer ' + cfg.key.trim());
+        req.timeout = 180000;
+      } catch (e) {
+        err = '无法发起请求：' + (e && e.message ? e.message : String(e));
+        finish();
+        return;
       }
-      finish();
-    };
-    xhr.onerror = function () {
-      if (done) return;
-      err = apiError(0, '');
-      finish();
-    };
-    xhr.ontimeout = function () {
-      if (done) return;
-      err = '请求超时（180 秒），可缩短问题或稍后再试';
-      finish();
-    };
-    xhr.onabort = function () {
-      if (done) return;
-      aborted = true;
-      finish();
-    };
 
-    try {
-      xhr.send(JSON.stringify(payload));
-    } catch (e) {
-      err = '发送失败：' + (e && e.message ? e.message : String(e));
-      finish();
+      req.onprogress = function () { if (xhr === req && !done) parseStream(false); };
+      req.onreadystatechange = function () {
+        if (xhr === req && req.readyState === 3 && !done) parseStream(false);
+      };
+      req.onload = function () {
+        if (done || xhr !== req) return;
+        var raw = (req.responseText || '').trim();
+        if (req.status >= 200 && req.status < 300) {
+          if (cfg.mode === 'auto') saveActualMode(cfg.base, reqMode);
+          parseStream(true);
+          if (!gotContent && !gotReason && raw && raw.charAt(0) === '{') parseJson(raw);
+          if (!gotContent && !gotReason && !err) err = '接口返回为空';
+          // HTTP 200 但 body 是「不支持 Chat Completions」：自动改走 Responses
+          if (cfg.mode === 'auto' && reqMode === 'chat' && !gotContent && !gotReason && unsupportedText(err + ' ' + raw)) {
+            reqMode = 'responses';
+            resetAttempt();
+            fire();
+            return;
+          }
+        } else {
+          err = apiError(req.status, raw);
+          var retryAuto = cfg.mode === 'auto' && reqMode === 'chat' && !gotContent && !gotReason &&
+            (req.status === 404 || req.status === 405 || unsupportedText(raw) || unsupportedText(err));
+          if (retryAuto) {
+            reqMode = 'responses';
+            resetAttempt();
+            fire();
+            return;
+          }
+          // 思考参数不被接口接受：去掉 reasoning/thinking/effort 再试一次
+          if (req.status === 400 && !noReason && /reason|thinking|effort/i.test(raw + ' ' + err)) {
+            noReason = true;
+            resetAttempt();
+            fire();
+            return;
+          }
+        }
+        finish();
+      };
+      req.onerror = function () {
+        if (done || xhr !== req) return;
+        err = apiError(0, '');
+        finish();
+      };
+      req.ontimeout = function () {
+        if (done || xhr !== req) return;
+        err = '请求超时（180 秒），可缩短问题或稍后再试';
+        finish();
+      };
+      req.onabort = function () {
+        if (done || xhr !== req) return;
+        aborted = true;
+        finish();
+      };
+
+      try {
+        req.send(JSON.stringify(payload));
+      } catch (e) {
+        err = '发送失败：' + (e && e.message ? e.message : String(e));
+        finish();
+      }
     }
+
+    setBusy(true);
+    fire();
   }
 
   // ── 事件 ──
@@ -3760,44 +3901,18 @@
       cfgMsg.textContent = '先填 API Key，再扫描模型';
       return;
     }
-    var url = modelsUrl();
     scanBtn.disabled = true;
     scanBtn.textContent = '…';
-    cfgMsg.textContent = '扫描 ' + url + ' …';
-    var x = new XMLHttpRequest();
+    var urls = modelsUrls();
+    var scanning = true;
     function done() {
+      scanning = false;
       scanBtn.disabled = false;
       scanBtn.textContent = '扫描';
     }
-    try {
-      x.open('GET', url, true);
-      x.setRequestHeader('Authorization', 'Bearer ' + cfg.key.trim());
-      x.timeout = 20000;
-    } catch (err) {
-      done();
-      cfgMsg.textContent = '扫描失败：' + (err && err.message ? err.message : err);
-      return;
-    }
-    x.onload = function () {
-      done();
-      if (x.status < 200 || x.status >= 300) {
-        cfgMsg.textContent = '扫描失败：' + apiError(x.status, x.responseText || '');
-        return;
-      }
-      var ids = [];
-      try {
-        var j = JSON.parse(x.responseText || '{}');
-        var arr = j.data || j.models || (Object.prototype.toString.call(j) === '[object Array]' ? j : []);
-        arr.forEach(function (m) {
-          var id = typeof m === 'string' ? m : (m && (m.id || m.name));
-          if (id) ids.push(String(id));
-        });
-      } catch (err2) {}
+    function applyModels(ids) {
       ids = ids.filter(function (v, i) { return v && ids.indexOf(v) === i; }).slice(0, 300);
-      if (!ids.length) {
-        cfgMsg.textContent = '扫描完成，但没有解析到模型名（可手填）';
-        return;
-      }
+      if (!ids.length) return false;
       modelList = ids;
       save(K_MODELS, JSON.stringify(ids));
       syncProfile(true);
@@ -3818,19 +3933,55 @@
       modelSel.value = cfg.model;
       syncProfile(true);
       cfgMsg.textContent = '扫描到 ' + ids.length + ' 个模型 · 已保存在本机，可在「模型」下拉里选';
-    };
-    x.onerror = function () {
-      done();
-      cfgMsg.textContent = '扫描失败：网络/CORS 错误';
-    };
-    x.ontimeout = function () {
-      done();
-      cfgMsg.textContent = '扫描超时';
-    };
-    try { x.send(); } catch (err3) {
-      done();
-      cfgMsg.textContent = '扫描失败：' + (err3 && err3.message ? err3.message : err3);
+      return true;
     }
+    function attempt(i, lastErr) {
+      if (!scanning) return;
+      if (i >= urls.length) {
+        done();
+        cfgMsg.textContent = '扫描失败：' + (lastErr || '所有模型地址都不可用') +
+          (cfg.proxy ? '' : '（中转站多半被 CORS 拦截，可在「CORS 代理」填 Worker 地址）');
+        return;
+      }
+      var rawUrl = urls[i];
+      var url = proxied(rawUrl);
+      cfgMsg.textContent = '扫描 ' + url + ' …';
+      var x = new XMLHttpRequest();
+      try { x.open('GET', url, true); } catch (e0) {
+        attempt(i + 1, '代理地址不合法：' + (e0 && e0.message ? e0.message : e0));
+        return;
+      }
+      try { x.setRequestHeader('Authorization', 'Bearer ' + cfg.key.trim()); } catch (e) {}
+      x.timeout = 20000;
+      x.onload = function () {
+        if (!scanning) return;
+        if (x.status >= 200 && x.status < 300) {
+          var ids = [];
+          try { ids = modelIds(JSON.parse(x.responseText || '{}')); } catch (e2) {}
+          if (applyModels(ids)) { done(); return; }
+          attempt(i + 1, '接口返回里没有模型列表');
+          return;
+        }
+        if (x.status === 401 || x.status === 403) {
+          done();
+          cfgMsg.textContent = '扫描失败：' + apiError(x.status, x.responseText || '');
+          return;
+        }
+        attempt(i + 1, apiError(x.status, x.responseText || ''));
+      };
+      x.onerror = function () {
+        if (!scanning) return;
+        attempt(i + 1, '网络/CORS 错误');
+      };
+      x.ontimeout = function () {
+        if (!scanning) return;
+        attempt(i + 1, '扫描超时');
+      };
+      try { x.send(); } catch (e3) {
+        attempt(i + 1, (e3 && e3.message ? e3.message : String(e3)));
+      }
+    }
+    attempt(0, '');
   };
   modeSel.onchange = function () {
     cfg.mode = modeSel.value;

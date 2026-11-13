@@ -251,7 +251,7 @@
     }
     if (window.__fhCam) { go(); return; }
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.13';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.14';
     sc.onload = go;
     sc.onerror = function () { alert('相机模块加载失败（检查网络 / CDN）'); };
     document.head.appendChild(sc);

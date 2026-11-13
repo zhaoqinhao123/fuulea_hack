@@ -1,18 +1,44 @@
-/* 网页相机 v3.13 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
+/* 网页相机 v3.14 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
    用法：
      window.__fhCam.open({
        title: '拍照',
        mode: 'both' | 'photo' | 'video',   // 默认 both
        facing: 'environment' | 'user',
-       onPhoto: function (blob, info) {},  // info = {name, width, height, size}
-       onVideo: function (blob, info) {},  // info = {name, mime, size, dur}
+       preview: true,                       // 拍完/录完先预览；聊天室用 true
+       onPhoto: function (blob, info) {},   // info = {name, width, height, size, kind}
+       onVideo: function (blob, info) {},   // info = {name, mime, size, dur, kind}
        onClose: function () {}
      });
+   拍到的照片 / 视频会自动存进本机相册（window.__fhAlbum）。
    分辨率存在 localStorage: fh:cam:res（长边像素，默认 2560）
 */
 (function () {
   'use strict';
   if (window.__fhCam) return;
+
+  var SELF_SRC = (document.currentScript && document.currentScript.src) || '';
+  var CAM_BASE = SELF_SRC.split('?')[0].split('#')[0].replace(/\/mods\/[^\/]+$/, '');
+  var albumWait = null;
+
+  function ensureAlbum(cb) {
+    if (window.__fhAlbum) { cb(); return; }
+    if (albumWait) { albumWait.push(cb); return; }
+    albumWait = [cb];
+    function ok() {
+      var q = albumWait || [];
+      albumWait = null;
+      q.forEach(function (f) { try { f(); } catch (e) {} });
+    }
+    function fail() {
+      albumWait = null;
+      if (S) toast(S, '相册模块加载失败，这次拍摄不会自动保存', true);
+    }
+    var sc = document.createElement('script');
+    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.14';
+    sc.onload = function () { if (window.__fhAlbum) ok(); else fail(); };
+    sc.onerror = fail;
+    document.head.appendChild(sc);
+  }
 
   var K_RES = 'fh:cam:res';
   var RES_OPTS = [
@@ -104,6 +130,7 @@
     if (!s) return;
     S = null;
     s.dead = true;
+    if (s.previewUrl) { try { URL.revokeObjectURL(s.previewUrl); } catch (e) {} s.previewUrl = ''; }
     if (s.timer) { clearInterval(s.timer); s.timer = 0; }
     try { if (s.recorder && s.recorder.state === 'recording') s.recorder.stop(); } catch (e) {}
     s.recorder = null;
@@ -135,11 +162,15 @@
     opts = opts || {};
     if (S) close();
     var s = S = {
-      opts: opts, mode: opts.mode === 'photo' || opts.mode === 'video' ? opts.mode : 'both',
+      opts: opts,
+      mode: opts.mode === 'video' ? 'video' : 'photo',
+      canBoth: opts.mode !== 'photo' && opts.mode !== 'video',
       facing: opts.facing === 'user' ? 'user' : 'environment',
-      res: readRes(), zoom: 1, dead: false,
+      res: readRes(), zoom: 1, dead: false, preview: !!opts.preview,
       stream: null, track: null, recorder: null, chunks: [], mic: null,
-      recBytes: 0, recStart: 0, timer: 0, lastPhotoAt: 0
+      recBytes: 0, recStart: 0, timer: 0, lastPhotoAt: 0,
+      previewEl: null, previewUrl: '', previewBlob: null, previewInfo: null, previewKind: '',
+      sending: false
     };
 
     var root = s.root = el('div', 'position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column;' +
@@ -169,6 +200,21 @@
       'color:#fff;font:17px/1 inherit;cursor:pointer;flex-shrink:0', '✕');
     xBtn.title = '关闭';
     top.append(resSel, tt, xBtn);
+
+    // v3.14：拍照 / 录像 明确切换（单快门）
+    var modeBar = null, modeBtns = {};
+    if (s.canBoth) {
+      modeBar = el('div', 'position:relative;z-index:6;display:flex;justify-content:center;gap:6px;' +
+        'padding:0 12px 8px;background:linear-gradient(rgba(0,0,0,.55),transparent);flex-shrink:0');
+      [['photo', '📷 拍照'], ['video', '🎥 录像']].forEach(function (it) {
+        var b = el('button', 'min-width:88px;height:32px;padding:0 14px;border:1px solid rgba(255,255,255,.24);' +
+          'border-radius:999px;background:rgba(0,0,0,.42);color:#cfcfd8;font:12px/1 inherit;cursor:pointer', it[1]);
+        b.setAttribute('data-mode', it[0]);
+        b.onclick = function () { setMode(it[0]); };
+        modeBtns[it[0]] = b;
+        modeBar.appendChild(b);
+      });
+    }
 
     var v = s.v = document.createElement('video');
     v.autoplay = true;
@@ -200,36 +246,34 @@
     zIn.title = '放大';
     zWrap.append(zOut, zRange, zLab, zIn);
 
-    // 底栏：左翻转，右录像 + 快门
-    var bar = s.bar = el('div', 'position:relative;z-index:6;display:flex;align-items:center;justify-content:flex-end;' +
+    // 底栏：左翻转，中间快门（拍照 / 开始-停止录像），右占位保持快门居中
+    var bar = s.bar = el('div', 'position:relative;z-index:6;display:flex;align-items:center;justify-content:space-between;' +
       'gap:20px;padding:14px 20px calc(22px + env(safe-area-inset-bottom,0px));' +
       'background:linear-gradient(transparent,rgba(0,0,0,.8));flex-shrink:0');
-    var flip = s.flip = el('button', 'margin-right:auto;width:52px;height:52px;padding:0;border:1px solid rgba(255,255,255,.26);' +
+    var flip = s.flip = el('button', 'width:52px;height:52px;padding:0;border:1px solid rgba(255,255,255,.26);' +
       'border-radius:50%;background:rgba(28,28,34,.66);color:#fff;font:20px/1 inherit;cursor:pointer;flex:0 0 auto', '🔄');
     flip.title = '前后摄像头';
-    var recLabel = el('div', 'position:absolute;right:20px;bottom:calc(104px + env(safe-area-inset-bottom,0px));' +
+    var recLabel = el('div', 'position:absolute;left:50%;top:-34px;transform:translateX(-50%);' +
       'z-index:7;padding:4px 10px;border-radius:999px;background:rgba(210,60,60,.82);color:#fff;' +
       'font:11px/1.5 ui-monospace,monospace;display:none;white-space:nowrap', '● 0:00 / 0.0 MB');
-    var rec = s.rec = el('button', 'min-width:64px;height:52px;padding:0 14px;border:1px solid rgba(255,255,255,.26);' +
-      'border-radius:999px;background:rgba(28,28,34,.66);color:#fff;font:13px/1 inherit;cursor:pointer;flex:0 0 auto', '🎥');
-    rec.title = '录像（带麦克风）';
+    var spacer = el('div', 'width:52px;height:52px;flex:0 0 auto');
     var shot = s.shot = el('button', 'width:76px;height:76px;padding:0;border:4px solid rgba(255,255,255,.88);' +
       'border-radius:50%;background:#fff;color:#111;font:700 14px/1 inherit;cursor:pointer;flex:0 0 auto;' +
-      'box-shadow:0 0 0 4px rgba(0,0,0,.28),0 6px 20px rgba(0,0,0,.5);transition:transform .12s', '');
+      'box-shadow:0 0 0 4px rgba(0,0,0,.28),0 6px 20px rgba(0,0,0,.5);transition:transform .12s,background .12s', '');
     shot.title = '拍照';
     shot.setAttribute('aria-label', '拍照');
     shot.onpointerdown = function () { shot.style.transform = 'scale(.92)'; };
     shot.onpointerup = function () { shot.style.transform = ''; };
     shot.onpointercancel = function () { shot.style.transform = ''; };
-    if (s.mode === 'video') shot.style.display = 'none';
-    if (s.mode === 'photo') rec.style.display = 'none';
 
-    bar.append(flip, rec, shot);
+    bar.append(flip, shot, spacer);
 
     var failBox = s.failBox = el('div', 'position:absolute;inset:0;z-index:9;display:none;place-items:center;' +
       'padding:28px;text-align:center;color:#c9c9d2;font:13px/1.9 inherit;white-space:pre-wrap;background:#000');
 
-    root.append(top, v, toastEl, zWrap, recLabel, bar, failBox);
+    root.append(top);
+    if (modeBar) root.append(modeBar);
+    root.append(v, toastEl, zWrap, recLabel, bar, failBox);
     document.body.append(root);
 
     // ── 打开摄像头 ──
@@ -310,8 +354,191 @@
       close();
     };
 
+    // ── v3.14：模式 / 快门外观 / 相册 / 预览 ──
+    function setMode(m) {
+      if (s.recorder) { toast(s, '录像中不能切换模式', true); return; }
+      if (m !== 'photo' && m !== 'video') return;
+      s.mode = m;
+      updateMode();
+      updateShutter();
+      toast(s, m === 'photo' ? '拍照模式' : '录像模式');
+    }
+
+    function updateMode() {
+      if (!modeBar) return;
+      Object.keys(modeBtns).forEach(function (k) {
+        var on = k === s.mode;
+        modeBtns[k].style.background = on ? '#fff' : 'rgba(0,0,0,.42)';
+        modeBtns[k].style.color = on ? '#111' : '#cfcfd8';
+        modeBtns[k].style.borderColor = on ? '#fff' : 'rgba(255,255,255,.24)';
+      });
+    }
+
+    function updateShutter() {
+      var recording = !!(s.recorder && s.recorder.state === 'recording');
+      if (recording) {
+        shot.textContent = '■';
+        shot.style.background = '#e5484d';
+        shot.style.color = '#fff';
+        shot.style.borderColor = 'rgba(255,255,255,.9)';
+        shot.title = '停止录像';
+        shot.setAttribute('aria-label', '停止录像');
+      } else if (s.mode === 'video') {
+        shot.textContent = '●';
+        shot.style.background = '#e5484d';
+        shot.style.color = '#fff';
+        shot.style.borderColor = 'rgba(255,255,255,.9)';
+        shot.title = '开始录像';
+        shot.setAttribute('aria-label', '开始录像');
+      } else {
+        shot.textContent = '';
+        shot.style.background = '#fff';
+        shot.style.color = '#111';
+        shot.style.borderColor = 'rgba(255,255,255,.88)';
+        shot.title = '拍照';
+        shot.setAttribute('aria-label', '拍照');
+      }
+    }
+
+    function archive(blob, info, kind) {
+      var meta = {
+        name: info.name, kind: kind, source: 'camera',
+        dur: info.dur || 0, width: info.width || 0, height: info.height || 0
+      };
+      function doSave() {
+        if (!window.__fhAlbum || !window.__fhAlbum.save) {
+          toast(s, '已保存到相机，但相册模块未加载', true);
+          return;
+        }
+        try {
+          window.__fhAlbum.save(blob, meta).catch(function (e) {
+            toast(s, '存相册失败：' + (e && e.message ? e.message : e), true);
+          });
+        } catch (e) {
+          toast(s, '存相册失败：' + (e && e.message ? e.message : e), true);
+        }
+      }
+      ensureAlbum(doSave);
+    }
+
+    function closePreview() {
+      if (s.previewUrl) { try { URL.revokeObjectURL(s.previewUrl); } catch (e) {} s.previewUrl = ''; }
+      if (s.previewEl) { try { s.previewEl.remove(); } catch (e) {} s.previewEl = null; }
+      s.previewBlob = null;
+      s.previewInfo = null;
+      s.previewKind = '';
+      s.sending = false;
+      updateShutter();
+    }
+
+    function showPreview(kind, blob, info) {
+      closePreview();
+      s.previewBlob = blob;
+      s.previewInfo = info;
+      s.previewKind = kind;
+      var url = '';
+      try { url = URL.createObjectURL(blob); } catch (e) { toast(s, '预览失败：' + (e && e.message ? e.message : e), true); return; }
+      s.previewUrl = url;
+
+      var ov = el('div', 'position:absolute;inset:0;z-index:20;background:#000;display:flex;flex-direction:column;' +
+        'font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif');
+      var head = el('div', 'display:flex;align-items:center;gap:10px;padding:12px 14px;color:#e8e8ee;flex-shrink:0');
+      head.appendChild(el('div', 'flex:1;font:13px/1.3 inherit', kind === 'image' ? '照片预览' : '录像预览'));
+      var t = el('div', 'color:#8f8f9c;font:11px/1.3 inherit', bytes(blob.size) + (kind === 'video' && info.dur ? ' · ' + mmss(info.dur) : ''));
+      head.appendChild(t);
+      var x2 = el('button', 'width:32px;height:32px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.14);color:#fff;font:16px/1 inherit;cursor:pointer', '✕');
+      x2.title = '关闭预览';
+      x2.onclick = closePreview;
+      head.appendChild(x2);
+
+      var box = el('div', 'flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden');
+      if (kind === 'image') {
+        var im = document.createElement('img');
+        im.src = url;
+        im.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain';
+        box.appendChild(im);
+      } else {
+        var vd = document.createElement('video');
+        vd.src = url;
+        vd.controls = true;
+        vd.autoplay = true;
+        vd.loop = true;
+        vd.playsInline = true;
+        vd.setAttribute('playsinline', '');
+        vd.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;background:#000';
+        box.appendChild(vd);
+        var p = vd.play();
+        if (p && p.catch) p.catch(function () {});
+      }
+
+      var foot = el('div', 'display:flex;align-items:center;gap:10px;padding:14px 16px calc(20px + env(safe-area-inset-bottom,0px));flex-shrink:0');
+      function pbtn(txt, bg, color) {
+        return el('button', 'flex:1;height:44px;border:1px solid rgba(255,255,255,.22);border-radius:12px;' +
+          'background:' + bg + ';color:' + color + ';font:13px/1 inherit;cursor:pointer', txt);
+      }
+      var redo = pbtn('重拍', 'rgba(28,28,34,.8)', '#e8e8ee');
+      var done = pbtn('完成', 'rgba(28,28,34,.8)', '#e8e8ee');
+      var send = pbtn('发送', '#fff', '#111');
+      redo.onclick = function () {
+        closePreview();
+        toast(s, '已存入相册，可以重拍');
+      };
+      done.onclick = function () {
+        closePreview();
+        toast(s, '已存入相册');
+      };
+      var fn = kind === 'image' ? s.opts.onPhoto : s.opts.onVideo;
+      if (typeof fn !== 'function') send.style.display = 'none';
+      send.onclick = function () {
+        if (s.sending || typeof fn !== 'function') return;
+        s.sending = true;
+        send.disabled = true;
+        send.textContent = '发送中…';
+        send.style.opacity = '.65';
+        var ret;
+        try { ret = fn(blob, info); } catch (e) {
+          s.sending = false; send.disabled = false; send.textContent = '发送'; send.style.opacity = '';
+          toast(s, '发送失败：' + (e && e.message ? e.message : e), true);
+          return;
+        }
+        Promise.resolve(ret).then(function () {
+          s.sending = false;
+          toast(s, kind === 'image' ? '照片已发送' : '视频已发送');
+          closePreview();
+        }).catch(function (e) {
+          s.sending = false;
+          send.disabled = false;
+          send.textContent = '发送';
+          send.style.opacity = '';
+          toast(s, '发送失败：' + (e && e.message ? e.message : e), true);
+        });
+      };
+      foot.append(redo, done, send);
+      ov.append(head, box, foot);
+      root.appendChild(ov);
+      s.previewEl = ov;
+    }
+
+    function deliver(kind, blob, info) {
+      if (s.preview) { showPreview(kind, blob, info); return; }
+      var fn = kind === 'image' ? s.opts.onPhoto : s.opts.onVideo;
+      if (typeof fn !== 'function') return;
+      try {
+        var ret = fn(blob, info);
+        if (ret && ret.catch) ret.catch(function (e) { toast(s, '处理失败：' + (e && e.message ? e.message : e), true); });
+      } catch (e) {
+        toast(s, '处理失败：' + (e && e.message ? e.message : e), true);
+      }
+    }
+
+    updateMode();
+    updateShutter();
+
     // ── 拍照 ──
     shot.onclick = function () {
+      if (s.recorder && s.recorder.state === 'recording') { stopRec(); return; }
+      if (s.previewEl) return;
+      if (s.mode === 'video') { startRec(); return; }
       if (!s.stream || !v.videoWidth || !v.videoHeight) { toast(s, '相机还没准备好', true); return; }
       if (Date.now() - s.lastPhotoAt < 700) return;
       s.lastPhotoAt = Date.now();
@@ -330,26 +557,23 @@
       c.toBlob(function (b) {
         if (!b) { toast(s, '拍照失败（没有图像数据）', true); return; }
         var name = 'cam-' + stamp() + '.jpg';
-        toast(s, '已拍 ' + cw + '×' + ch + ' · ' + bytes(b.size));
-        try { if (s.opts.onPhoto) s.opts.onPhoto(b, { name: name, width: cw, height: ch, size: b.size, mime: 'image/jpeg' }); }
-        catch (e) { toast(s, '处理照片出错：' + (e && e.message ? e.message : e), true); }
+        var info = { name: name, width: cw, height: ch, size: b.size, mime: 'image/jpeg', kind: 'image' };
+        toast(s, '已拍 ' + cw + '×' + ch + ' · ' + bytes(b.size) + '，已存相册');
+        archive(b, info, 'image');
+        deliver('image', b, info);
       }, 'image/jpeg', 0.92);
     };
 
     // ── 录像 ──
-    rec.onclick = function () {
-      if (s.recorder && s.recorder.state === 'recording') { stopRec(); return; }
+    function startRec() {
+      if (s.recorder && s.recorder.state === 'recording') return;
       if (!s.stream) { toast(s, '相机还没准备好', true); return; }
       if (typeof MediaRecorder === 'undefined') { toast(s, '这个浏览器不支持录像', true); return; }
-      startRec();
-    };
-
-    function startRec() {
       s.chunks = [];
       s.recBytes = 0;
       s.recStart = Date.now();
-      rec.textContent = '…';
-      rec.disabled = true;
+      shot.textContent = '…';
+      shot.disabled = true;
 
       var micP = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
         ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
@@ -370,8 +594,8 @@
           } : { videoBitsPerSecond: V_BPS, audioBitsPerSecond: 96000 });
         } catch (e) {
           s.recorder = null;
-          rec.disabled = false;
-          rec.textContent = '🎥';
+          shot.disabled = false;
+          updateShutter();
           if (s.mic) { try { s.mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e2) {} s.mic = null; }
           toast(s, '录像初始化失败：' + (e && e.message ? e.message : e), true);
           return;
@@ -389,9 +613,9 @@
           var b = new Blob(s.chunks, { type: type });
           var dur = Math.round((Date.now() - s.recStart) / 1000);
           s.chunks = [];
-          rec.disabled = false;
-          rec.textContent = '🎥';
-          rec.style.background = 'rgba(28,28,34,.66)';
+          s.recorder = null;
+          shot.disabled = false;
+          updateShutter();
           recLabel.style.display = 'none';
           if (s.timer) { clearInterval(s.timer); s.timer = 0; }
           if (s.mic) { try { s.mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} s.mic = null; }
@@ -408,25 +632,23 @@
               toast(s, '这段录像编码异常（本机都解不了），已取消发送，请重录或换 720P 再试', true);
               return;
             }
-            toast(s, '录像完成 ' + mmss(dur) + ' · ' + bytes(b.size));
-            try { if (s.opts.onVideo) s.opts.onVideo(b, { name: name, mime: type, size: b.size, dur: dur }); }
-            catch (e) { toast(s, '处理录像出错：' + (e && e.message ? e.message : e), true); }
+            var info = { name: name, mime: type, size: b.size, dur: dur, kind: 'video' };
+            toast(s, '录像完成 ' + mmss(dur) + ' · ' + bytes(b.size) + '，已存相册');
+            archive(b, info, 'video');
+            deliver('video', b, info);
           });
         };
         // v3.13：MP4 不分片（分片拼接正是坏文件的主因）；WebM 分片没问题，顺便看体积
         try { isMp4 ? s.recorder.start() : s.recorder.start(500); }
         catch (e) {
           s.recorder = null;
-          rec.disabled = false;
-          rec.textContent = '🎥';
+          shot.disabled = false;
+          updateShutter();
           toast(s, '录像启动失败：' + (e && e.message ? e.message : e), true);
           return;
         }
-        rec.disabled = false;
-        rec.textContent = '⏹ 停止';
-        rec.style.background = 'rgba(150,40,40,.9)';
-        shot.disabled = true;
-        shot.style.opacity = '.45';
+        shot.disabled = false;
+        updateShutter();
         recLabel.style.display = 'block';
         if (!s.mic) toast(s, '麦克风不可用，将无声录制', true);
         s.timer = setInterval(function () {

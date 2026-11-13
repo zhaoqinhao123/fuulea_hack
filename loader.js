@@ -155,7 +155,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.13.1';
+  var TAG = '3.14';
 
   // 把自己这份源码存进 localStorage，供 44 字符短串 eval 用。
   function cacheSelf() {
@@ -216,7 +216,9 @@
     'https://gitlab.com/api/v4/projects/88544686/repository/files/'
   ];
 
-  function loadMod(path, btn, after) {
+  window.__fhLoadMod = loadMod;
+
+  function loadMod(path, btn, after, quiet) {
     function done() { if (btn) { btn.disabled = false; btn.style.opacity = 1; } }
     function ok() {
       done();
@@ -226,8 +228,12 @@
       var c = null;
       try { c = localStorage.getItem('fh:mod:' + path); } catch (e) {}
       if (c) { try { eval(c); return ok(); } catch (e) {} }
-      alert('加载失败：' + why);
       done();
+      if (quiet && typeof after === 'function') {
+        try { after(new Error(why)); } catch (e) {}
+        return;
+      }
+      alert('加载失败：' + why);
     }
     var urls = [
       MOD_BASES[0] + path + '?t=' + Date.now(),
@@ -1171,7 +1177,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.13.1', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.14', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

