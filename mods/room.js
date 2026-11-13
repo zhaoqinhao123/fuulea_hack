@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.12 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.13 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -78,6 +78,50 @@
     var p = String(m.file || '');
     var i = p.lastIndexOf('/');
     return i >= 0 ? p.slice(i + 1) : p;
+  }
+  // v3.13 视频/语音「能发送但看不了」的真正原因：
+  // gitReq 用 responseType='blob' 下载，Blob.type 直接来自 GitLab raw 的 Content-Type，
+  // 二进制文件常被回成 application/octet-stream / text/plain；
+  // <video>/<audio> 拿到这种 MIME 会直接报「不支持的格式」，跟容器是 mp4 还是 webm 无关
+  //（所以以前换回 WebM 也一样看不了）。下载后按扩展名/消息里记的 mime 重新包一层再播。
+  function guessMime(ext, mime) {
+    var m = String(mime || '').toLowerCase().split(';')[0].trim();
+    if (m && /^(video|audio|image)\//.test(m) && m.indexOf('octet-stream') < 0 && m !== 'image/*') return m;
+    switch (String(ext || '').toLowerCase()) {
+      case '.mp4': case '.m4v': return 'video/mp4';
+      case '.webm': return 'video/webm';
+      case '.mov': return 'video/quicktime';
+      case '.3gp': return 'video/3gpp';
+      case '.mkv': return 'video/x-matroska';
+      case '.mp3': return 'audio/mpeg';
+      case '.wav': return 'audio/wav';
+      case '.m4a': case '.aac': return 'audio/mp4';
+      case '.ogg': case '.oga': case '.opus': return 'audio/ogg';
+      case '.amr': return 'audio/amr';
+      case '.png': return 'image/png';
+      case '.jpg': case '.jpeg': return 'image/jpeg';
+      case '.gif': return 'image/gif';
+      case '.webp': return 'image/webp';
+      case '.bmp': return 'image/bmp';
+      case '.heic': return 'image/heic';
+      case '.heif': return 'image/heif';
+      case '.svg': return 'image/svg+xml';
+    }
+    return '';
+  }
+  function fixMediaType(b, m) {
+    var ext = mediaExt(m.file);
+    var kind = m.kind || mediaType(ext, m.mime);
+    var want = guessMime(ext, m.mime);
+    // 语音消息常用 .webm 存，但扩展名会推成 video/webm；给 <audio> 时换成音频 MIME
+    if (kind === 'voice' && /^video\//.test(want)) {
+      want = /mp4/.test(want) ? 'audio/mp4' : 'audio/webm';
+    }
+    if (!want && kind === 'video') want = 'video/webm';
+    if (!want && kind === 'voice') want = 'audio/webm';
+    var cur = String(b.type || '').toLowerCase();
+    if (!want || cur === want) return b;
+    try { return new Blob([b], { type: want }); } catch (e) { return b; }
   }
   // 下载用的文件名：显示名没有扩展名时补上（语音消息标题是「语音消息 0:03」这种）
   function dlName(m) {
@@ -622,26 +666,36 @@
 
   // ── 样式 ──
   var css = [
-    '#__rm{all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;color:#e9e9f2;',
+    '#__rm{all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;color:var(--fg);',
     'font:13px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;',
     '--bg:#1b1e27;--bg2:#222633;--line:rgba(255,255,255,.12);--dim:#8b90a2;--fg:#e9e9f2;--bot:#2a2f3e;',
-    '--accent:#3f6fe8;--accent2:#2c53c4;--danger:#e05656}',
+    '--accent:#3f6fe8;--accent2:#2c53c4;--danger:#e05656;--headbg:rgba(255,255,255,.035);',
+    '--input:#151821;--footbg:rgba(0,0,0,.12);--sunken:rgba(0,0,0,.28);--codebg:rgba(255,255,255,.12);',
+    '--prebg:rgba(0,0,0,.32);--fg2:#c9cede;--link:#a9c3ff;--op:1}',
+    // v3.13：浅色主题（「黑白背景」开关）
+    '#__rm[data-theme="light"]{--bg:#eef1f7;--bg2:#ffffff;--line:rgba(20,26,40,.16);--dim:#6b7280;--fg:#171a21;--bot:#e6eaf4;',
+    '--accent:#3f6fe8;--accent2:#2c53c4;--headbg:rgba(0,0,0,.035);--input:#fff;--footbg:rgba(0,0,0,.035);',
+    '--sunken:rgba(0,0,0,.06);--codebg:rgba(0,0,0,.07);--prebg:rgba(0,0,0,.05);--fg2:#3a4152;--link:#2c53c4}',
     '#__rm *{box-sizing:border-box}',
     '#__rm .rm-win{position:fixed;display:flex;flex-direction:column;min-width:280px;min-height:220px;',
-    'background:linear-gradient(180deg,var(--bg2),var(--bg));border:1px solid var(--line);border-radius:14px;',
+    'background:transparent;border:1px solid var(--line);border-radius:14px;',
     'box-shadow:0 24px 70px rgba(0,0,0,.6);overflow:hidden;pointer-events:auto;resize:none}',
+    // v3.13：底色单独一层，透明度只淡背景、不淡文字（和主面板一致）
+    '#__rm .rm-bg{position:absolute;inset:0;z-index:0;pointer-events:none;border-radius:inherit;',
+    'background:linear-gradient(180deg,var(--bg2),var(--bg));opacity:var(--op,1);transition:opacity .12s}',
+    '#__rm .rm-head,#__rm .rm-body,#__rm .rm-foot{position:relative;z-index:1}',
     '#__rm .rm-win.full{left:0!important;top:0!important;width:100%!important;height:100%!important;',
     'border-radius:0;border:0;box-shadow:none}',
     '#__rm .rm-head{display:flex;align-items:center;gap:7px;height:44px;padding:0 8px 0 12px;',
     'border-bottom:1px solid var(--line);flex-shrink:0;cursor:move;touch-action:none;user-select:none;',
-    '-webkit-user-select:none;background:rgba(255,255,255,.035)}',
+    '-webkit-user-select:none;background:var(--headbg)}',
     '#__rm .rm-win.full .rm-head{cursor:default}',
     '#__rm .rm-logo{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;',
     'background:linear-gradient(135deg,#4d7ef8,#2c53c4);font-size:13px;flex-shrink:0}',
     '#__rm .rm-title{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
     '#__rm .rm-badge{font-size:9px;color:#9dbcff;border:1px solid rgba(120,160,255,.4);border-radius:4px;padding:1px 4px;flex-shrink:0}',
     '#__rm .rm-sp{flex:1;min-width:0}',
-    '#__rm .rm-head button{width:32px;height:32px;border:0;border-radius:9px;background:transparent;color:#c9cede;',
+    '#__rm .rm-head button{width:32px;height:32px;border:0;border-radius:9px;background:transparent;color:var(--fg2);',
     'font:15px/1 inherit;cursor:pointer;flex-shrink:0;padding:0}',
     '#__rm .rm-head button:hover{background:rgba(255,255,255,.1)}',
     '#__rm .rm-head .rm-close{color:#ff9a9a}',
@@ -657,7 +711,7 @@
     '#__rm .rm-line.me .rm-bubble{background:linear-gradient(180deg,var(--accent),var(--accent2));color:#fff}',
     '#__rm .rm-bubble img{display:block;max-width:100%;max-height:250px;border-radius:8px;margin-top:5px;cursor:zoom-in}',
     '#__rm .rm-time{font-size:9px;color:var(--dim);padding:0 3px}',
-    '#__rm .rm-foot{flex-shrink:0;border-top:1px solid var(--line);padding:6px 9px 7px;background:rgba(0,0,0,.12)}',
+    '#__rm .rm-foot{flex-shrink:0;border-top:1px solid var(--line);padding:6px 9px 7px;background:var(--footbg)}',
     '#__rm .rm-tip{font-size:9.5px;line-height:1.7;color:var(--dim);min-height:16px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}',
     '#__rm .rm-tip button{border:1px solid rgba(120,160,255,.45);border-radius:6px;background:rgba(77,126,248,.14);',
     'color:#a9c3ff;font:9.5px/1 inherit;padding:3px 6px;cursor:pointer}',
@@ -673,7 +727,7 @@
     '#__rm .rm-err button:hover{background:rgba(240,90,70,.34)}',
     '#__rm .rm-compose{display:flex;align-items:flex-end;gap:5px;margin-top:4px}',
     '#__rm .rm-ta{flex:1;min-width:0;min-height:36px;max-height:96px;padding:8px 10px;resize:none;border:1px solid var(--line);',
-    'border-radius:9px;background:#151821;color:var(--fg);font:13px/1.45 inherit;outline:none}',
+    'border-radius:9px;background:var(--input);color:var(--fg);font:13px/1.45 inherit;outline:none}',
     '#__rm .rm-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(77,126,248,.14)}',
     '#__rm .rm-ta:disabled{opacity:.55;cursor:not-allowed}',
     '#__rm .rm-send{height:36px;min-width:52px;padding:0 10px;border:0;border-radius:9px;',
@@ -681,8 +735,8 @@
     'font-weight:600;cursor:pointer;flex-shrink:0}',
     '#__rm .rm-send:disabled{opacity:.45;cursor:not-allowed}',
     // v3.10 文件卡片 / 语音 / 按钮
-    '#__rm .rm-cbtn{height:34px;width:34px;border:1px solid var(--line);border-radius:9px;background:rgba(255,255,255,.05);',
-    'color:#c9cede;font:13px/1 inherit;cursor:pointer;flex-shrink:0;padding:0;display:flex;align-items:center;justify-content:center}',
+    '#__rm .rm-cbtn{height:34px;width:34px;border:1px solid var(--line);border-radius:9px;background:var(--headbg);',
+    'color:var(--fg2);font:13px/1 inherit;cursor:pointer;flex-shrink:0;padding:0;display:flex;align-items:center;justify-content:center}',
     '#__rm .rm-cbtn:hover{background:rgba(255,255,255,.13)}',
     '#__rm .rm-cbtn.on{background:var(--danger);color:#fff;border-color:var(--danger)}',
     '#__rm .rm-cbtn[hidden]{display:none}',
@@ -690,7 +744,7 @@
     'border-radius:9px;background:rgba(77,126,248,.08);cursor:pointer;max-width:100%}',
     '#__rm .rm-file:hover{border-color:rgba(120,160,255,.75);background:rgba(77,126,248,.16)}',
     '#__rm .rm-file.loading{opacity:.6;pointer-events:none}',
-    '#__rm .rm-file-top{display:flex;align-items:center;gap:7px;font-size:12px;color:#a9c3ff}',
+    '#__rm .rm-file-top{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--link)}',
     '#__rm .rm-file-ic{font-size:16px;flex-shrink:0}',
     '#__rm .rm-file-lb{min-width:0}',
     '#__rm .rm-file-sub{margin-top:2px;font-size:10px;color:var(--dim)}',
@@ -698,21 +752,21 @@
     '#__rm .rm-file-thumb{display:block;max-width:100%;max-height:220px;border-radius:8px;margin-top:7px;background:#000}',
     '#__rm .rm-file-thumb[data-empty]{display:none}',
     '#__rm .rm-vrow{display:flex;align-items:center;gap:8px;margin-top:7px;padding:7px 9px;border-radius:9px;',
-    'background:rgba(0,0,0,.28);flex-wrap:wrap}',
+    'background:var(--sunken);flex-wrap:wrap}',
     '#__rm .rm-vplay{width:30px;height:30px;border:0;border-radius:50%;background:var(--accent);color:#fff;',
     'font:12px/1 inherit;cursor:pointer;flex-shrink:0;padding:0}',
     '#__rm .rm-vplay:hover{background:var(--accent2)}',
     '#__rm .rm-vdur{font:10.5px/1 ui-monospace,monospace;color:var(--dim);flex-shrink:0;min-width:34px}',
     '#__rm .rm-vtt{height:28px;padding:0 10px;border:1px solid rgba(120,160,255,.45);border-radius:7px;',
-    'background:rgba(77,126,248,.14);color:#a9c3ff;font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
+    'background:rgba(77,126,248,.14);color:var(--link);font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
     '#__rm .rm-vtt:hover{background:rgba(77,126,248,.26)}',
     '#__rm .rm-vdl{height:28px;padding:0 9px;border:1px solid rgba(120,160,255,.45);border-radius:7px;',
-    'background:rgba(77,126,248,.14);color:#a9c3ff;font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
+    'background:rgba(77,126,248,.14);color:var(--link);font:10.5px/1 inherit;cursor:pointer;flex-shrink:0}',
     '#__rm .rm-vdl:hover{background:rgba(77,126,248,.26)}',
     '#__rm .rm-file-err{margin-top:6px;font-size:11px;color:#ff9b9b}',
     '#__rm .rm-file-err.bad{color:#ffb4b4}',
-    '#__rm .rm-file-trans{margin-top:7px;padding:7px 9px;border-radius:8px;background:rgba(0,0,0,.28);',
-    'font-size:12px;line-height:1.6;color:#d8dcea;white-space:pre-wrap;word-break:break-word}',
+    '#__rm .rm-file-trans{margin-top:7px;padding:7px 9px;border-radius:8px;background:var(--sunken);',
+    'font-size:12px;line-height:1.6;color:var(--fg);white-space:pre-wrap;word-break:break-word}',
     '#__rm .rm-file-trans .none{color:var(--dim)}',
     '#__rm .rm-grip{position:absolute;right:1px;bottom:1px;width:22px;height:22px;z-index:12;cursor:se-resize;',
     'touch-action:none;opacity:.7;border-radius:0 0 12px 0;',
@@ -724,8 +778,8 @@
     '#__rm .rm-md h1{font-size:17px}#__rm .rm-md h2{font-size:15px}#__rm .rm-md h3{font-size:14px}',
     '#__rm .rm-md ul,#__rm .rm-md ol{margin:2px 0 6px;padding-left:20px}',
     '#__rm .rm-md li{margin:1px 0}',
-    '#__rm .rm-md code{padding:1px 4px;border-radius:4px;background:rgba(255,255,255,.12);font:11.5px/1.4 ui-monospace,monospace}',
-    '#__rm .rm-md pre{margin:5px 0;padding:8px 9px;border-radius:8px;background:rgba(0,0,0,.32);overflow:auto;max-width:100%}',
+    '#__rm .rm-md code{padding:1px 4px;border-radius:4px;background:var(--codebg);font:11.5px/1.4 ui-monospace,monospace}',
+    '#__rm .rm-md pre{margin:5px 0;padding:8px 9px;border-radius:8px;background:var(--prebg);overflow:auto;max-width:100%}',
     '#__rm .rm-md pre code{padding:0;background:transparent;font-size:11px;white-space:pre}',
     '#__rm .rm-md blockquote{margin:3px 0;padding:2px 0 2px 9px;border-left:3px solid rgba(120,160,255,.55);color:#c3c8d8}',
     '#__rm .rm-md hr{border:0;border-top:1px solid var(--line);margin:8px 0}',
@@ -744,11 +798,28 @@
     '#__rm .rm-zoom .zpct{font:12px/1 ui-monospace,monospace;color:#9dbcff;min-width:42px;text-align:center}',
     '#__rm .rm-zoom button{height:32px;min-width:34px;padding:0 9px;border:1px solid rgba(255,255,255,.22);border-radius:8px;',
     'background:rgba(255,255,255,.1);color:#fff;font:12px/1 inherit;cursor:pointer}',
-    '#__rm .rm-zoom .zstage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:grab}',
+    '#__rm .rm-zoom .zstage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:grab;position:relative}',
+    // v3.13：视频解码失败提示（以前是一片黑，什么也不说）
+    '#__rm .rm-vtip{position:absolute;left:10px;right:10px;bottom:10px;padding:9px 10px;border-radius:9px;',
+    'background:rgba(0,0,0,.72);color:#ffb4b4;font-size:11.5px;line-height:1.6;text-align:center;z-index:3}',
     '#__rm .rm-zoom .zstage.drag{cursor:grabbing}',
     '#__rm .rm-zoom .zstage img{max-width:100%;max-height:100%;transform-origin:center center;will-change:transform;',
     'user-select:none;-webkit-user-select:none;-webkit-user-drag:none;pointer-events:none}',
     '#__rm .rm-zoom .zhint{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:10px;color:rgba(255,255,255,.45)}',
+    // v3.13：透明度 / 主题面板
+    '#__rm .rm-pop{position:absolute;right:6px;top:46px;z-index:30;width:214px;padding:10px;border-radius:11px;',
+    'background:var(--bg2);border:1px solid var(--line);box-shadow:0 14px 40px rgba(0,0,0,.5);display:none;',
+    'font-size:11.5px;color:var(--fg)}',
+    '#__rm .rm-pop.on{display:block}',
+    '#__rm .rm-pop .row{display:flex;align-items:center;gap:8px;margin:0 0 9px}',
+    '#__rm .rm-pop .row:last-child{margin-bottom:0}',
+    '#__rm .rm-pop .lab{flex-shrink:0;width:42px;color:var(--dim)}',
+    '#__rm .rm-pop input[type=range]{flex:1;min-width:0;accent-color:var(--accent)}',
+    '#__rm .rm-pop .val{width:36px;text-align:right;font:10.5px/1 ui-monospace,monospace;color:var(--dim)}',
+    '#__rm .rm-pop .seg{display:flex;gap:4px;flex:1}',
+    '#__rm .rm-pop .seg button{flex:1;height:24px;border:1px solid var(--line);border-radius:7px;background:transparent;',
+    'color:var(--fg2);font:11px/1 inherit;cursor:pointer;padding:0}',
+    '#__rm .rm-pop .seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}',
     '@media (max-width:560px){#__rm .rm-line{max-width:94%}#__rm .rm-body{padding:9px}',
     '#__rm .rm-head{padding-left:9px}#__rm .rm-title{font-size:12.5px}#__rm .rm-grip{display:none}}'
   ].join('');
@@ -777,9 +848,16 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.12';
+  badge.textContent = 'v3.13';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
+  // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板
+  var themeBtn = document.createElement('button');
+  themeBtn.textContent = '🌓';
+  themeBtn.title = '背景主题（深色 / 浅色 / 跟随系统）';
+  var opBtn = document.createElement('button');
+  opBtn.textContent = '◐';
+  opBtn.title = '背景透明度';
   var refreshBtn = document.createElement('button');
   refreshBtn.textContent = '⟳';
   refreshBtn.title = '刷新';
@@ -790,7 +868,63 @@
   closeBtn.className = 'rm-close';
   closeBtn.textContent = '✕';
   closeBtn.title = '关闭';
-  head.append(logo, title, badge, sp, refreshBtn, fullBtn, closeBtn);
+  head.append(logo, title, badge, sp, themeBtn, opBtn, refreshBtn, fullBtn, closeBtn);
+
+  // v3.13：主题 / 透明度面板（挂在 win 上，绝对定位在标题栏下方）
+  var pop = document.createElement('div');
+  pop.className = 'rm-pop';
+  var opRow = document.createElement('div');
+  opRow.className = 'row';
+  var opLab = document.createElement('span');
+  opLab.className = 'lab';
+  opLab.textContent = '透明度';
+  var opRange = document.createElement('input');
+  opRange.type = 'range';
+  opRange.min = '15';
+  opRange.max = '100';
+  opRange.step = '5';
+  var opVal = document.createElement('span');
+  opVal.className = 'val';
+  opRow.append(opLab, opRange, opVal);
+  var thRow = document.createElement('div');
+  thRow.className = 'row';
+  var thLab = document.createElement('span');
+  thLab.className = 'lab';
+  thLab.textContent = '背景';
+  var seg = document.createElement('div');
+  seg.className = 'seg';
+  var thBtns = {};
+  [['dark', '深色'], ['light', '浅色'], ['auto', '跟随']].forEach(function (it) {
+    var b = document.createElement('button');
+    b.textContent = it[1];
+    b.setAttribute('data-th', it[0]);
+    b.onclick = function () { setTheme(it[0]); };
+    thBtns[it[0]] = b;
+    seg.appendChild(b);
+  });
+  thRow.append(thLab, seg);
+  // v3.13：识别引擎（浏览器 / 离线 Whisper，都免费）
+  var asrRow = document.createElement('div');
+  asrRow.className = 'row';
+  var asrLab = document.createElement('span');
+  asrLab.className = 'lab';
+  asrLab.textContent = '识别';
+  var asrSeg = document.createElement('div');
+  asrSeg.className = 'seg';
+  var asrBtns = {};
+  [['auto', '自动'], ['browser', '浏览器'], ['whisper', '离线']].forEach(function (it) {
+    var b = document.createElement('button');
+    b.textContent = it[1];
+    b.title = it[0] === 'auto' ? '先用浏览器识别，连不上自动切离线'
+      : it[0] === 'browser' ? '浏览器内置识别（免费，国内可能连不上服务）'
+        : '浏览器内离线 Whisper（免费、无需 key，首次下载约 80MB 模型）';
+    b.onclick = function () { setAsrMode(it[0]); };
+    asrBtns[it[0]] = b;
+    asrSeg.appendChild(b);
+  });
+  asrRow.append(asrLab, asrSeg);
+  pop.append(opRow, thRow, asrRow);
+  win.append(pop);
 
   var body = document.createElement('div');
   body.className = 'rm-body';
@@ -839,8 +973,12 @@
   var grip = document.createElement('div');
   grip.className = 'rm-grip';
   grip.title = '拖动调整大小';
-  win.append(head, body, foot, grip);
+  var bgLayer = document.createElement('div');
+  bgLayer.className = 'rm-bg';
+  win.append(bgLayer, head, body, foot, grip);
   root.append(win);
+  // v3.13：别让 loader 的通用窗口注入再往这里塞 📌/◐（聊天室自己带主题/透明度）
+  root.setAttribute('data-fh-skip', '1');
   document.body.append(root);
 
   // ── 窗口位置 / 大小 / 全屏 ──
@@ -858,10 +996,14 @@
   }
   function clampRect(r) {
     var v = viewport();
-    r.width = Math.max(MINW, Math.min(Number(r.width) || 480, v.w - 8));
-    r.height = Math.max(MINH, Math.min(Number(r.height) || 560, v.h - 8));
-    r.left = Math.max(4, Math.min(Number(r.left) || 0, v.w - r.width - 4));
-    r.top = Math.max(4, Math.min(Number(r.top) || 0, v.h - r.height - 4));
+    r.width = Math.max(MINW, Math.min(Number(r.width) || 480, Math.max(MINW, v.w - 8)));
+    r.height = Math.max(MINH, Math.min(Number(r.height) || 560, Math.max(MINH, v.h - 8)));
+    // v3.13：不再把窗口锁死在画面内（和其他浮窗一致，可以拖出去一半）。
+    // 只保证「标题栏还有 120px 宽、24px 高在屏内」，随时能拖回来。
+    var keepW = Math.min(120, r.width);
+    var keepH = Math.min(24, r.height);
+    r.left = Math.max(keepW - r.width, Math.min(Number(r.left) || 0, v.w - keepW));
+    r.top = Math.max(-(44 - keepH), Math.min(Number(r.top) || 0, v.h - keepH));
     return r;
   }
   function readRect() {
@@ -894,6 +1036,58 @@
   }
   rect = readRect();
   applyRect(rect);
+
+  // ── v3.13：主题（深/浅/跟随系统）+ 背景透明度 ──
+  var K_THEME = 'fh:room:theme';
+  var K_OP = 'fh:room:op';
+  var K_ASR = 'fh:room:asr';
+  var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+  function themeMode() {
+    var t = read(K_THEME, 'dark');
+    return (t === 'light' || t === 'auto') ? t : 'dark';
+  }
+  function applyTheme() {
+    var mode = themeMode();
+    var light = mode === 'light' || (mode === 'auto' && !!(mq && mq.matches));
+    root.setAttribute('data-theme', light ? 'light' : 'dark');
+    Object.keys(thBtns).forEach(function (k) { thBtns[k].classList.toggle('on', k === mode); });
+  }
+  function setTheme(mode) { save(K_THEME, mode); applyTheme(); }
+  function applyOp() {
+    var v = Number(read(K_OP, '100'));
+    if (!isFinite(v)) v = 100;
+    v = Math.max(15, Math.min(100, v));
+    win.style.setProperty('--op', String(v / 100));
+    try { opRange.value = String(v); } catch (e) {}
+    opVal.textContent = Math.round(v) + '%';
+  }
+  opRange.oninput = function () { save(K_OP, String(opRange.value)); applyOp(); };
+  opBtn.onclick = function (e) {
+    e.stopPropagation();
+    pop.classList.toggle('on');
+    if (pop.classList.contains('on')) applyOp();
+  };
+  themeBtn.onclick = function (e) {
+    e.stopPropagation();
+    var m = themeMode();
+    setTheme(m === 'dark' ? 'light' : m === 'light' ? 'auto' : 'dark');
+  };
+  document.addEventListener('pointerdown', function (e) {
+    if (!pop.classList.contains('on')) return;
+    if (pop.contains(e.target) || e.target === opBtn) return;
+    pop.classList.remove('on');
+  }, true);
+  if (mq) {
+    try { mq.addEventListener('change', applyTheme); }
+    catch (e) { try { mq.addListener(applyTheme); } catch (e2) {} }
+  }
+  applyTheme();
+  applyOp();
+  function setAsrMode(m) { save(K_ASR, m); applyAsrMode(); }
+  function applyAsrMode() {
+    Object.keys(asrBtns).forEach(function (k) { asrBtns[k].classList.toggle('on', k === asrMode()); });
+  }
+  applyAsrMode();
 
   function dragHead(e) {
     if (full || e.button > 0) return;
@@ -1124,6 +1318,7 @@
       }
     }
     var state = { loaded: false, url: null, blob: null };
+    card.__state = state;
     card.addEventListener('click', function () {
       if (state.loaded) {
         previewMedia(m, state.url);
@@ -1151,8 +1346,8 @@
         tipText('文件下载失败', 'warn');
         return;
       }
-      mediaBlobs[m.file] = b;
-      cb(b);
+      mediaBlobs[m.file] = fixMediaType(b, m);
+      cb(mediaBlobs[m.file]);
     });
   }
   function fmtDur(s) { s = Number(s) || 0; return Math.floor(s / 60) + ':' + pad2(Math.floor(s % 60)); }
@@ -1165,7 +1360,7 @@
   function previewMedia(m, url) {
     var kind = m.kind || mediaType(mediaExt(m.file), m.mime);
     if (kind === 'image') { zopen(url, mediaName(m)); return; }
-    if (kind === 'video') { openVideo(url, mediaName(m)); return; }
+    if (kind === 'video') { openVideo(url, dlName(m)); return; }
     if (kind === 'voice') { playVoice(m, url); return; }
     // 其他文件 → 下载
     var a = document.createElement('a');
@@ -1225,13 +1420,23 @@
     vplay.querySelector('.ztit').textContent = name || '视频';
     vplay.classList.add('on');
     v.onended = null;
+    var vt = vplay.querySelector('.rm-vtip');
+    if (vt) { try { vt.remove(); } catch (e) {} }
+    v.onerror = function () {
+      var stage = vplay.querySelector('.zstage');
+      if (!stage || stage.querySelector('.rm-vtip')) return;
+      var t2 = document.createElement('div');
+      t2.className = 'rm-vtip';
+      t2.textContent = '这段视频本机解不了（' + (vplay.__dname || '格式未知') + '）：点上方 ⏬ 下载到本机，用系统播放器或电脑上的 Chrome 打开';
+      stage.appendChild(t2);
+    };
     // 不自动播放；等用户点播放
   }
   function closeVideo() {
     if (vplay) {
       vplay.classList.remove('on');
       var v = vplay.querySelector('video');
-      if (v) { try { v.pause(); v.currentTime = 0; } catch (e) {} v.removeAttribute('src'); try { v.load(); } catch (e2) {} }
+      if (v) { try { v.onerror = null; v.pause(); v.currentTime = 0; } catch (e) {} v.removeAttribute('src'); try { v.load(); } catch (e2) {} }
     }
   }
   // v3.12：关闭聊天室 / 最小化 / 播另一条前，把所有音频视频立即停掉
@@ -1331,11 +1536,38 @@
     if (txt) {
       div.textContent = '📝 ' + txt;
     } else {
-      // v3.11：不再假装「转文字中…」（旧版这里永远不动，看起来像没反应）
+      // v3.13：以前这里只写死一句「没识别到」，现在给一个离线补转的入口
       var n = document.createElement('span');
       n.className = 'none';
-      n.textContent = '该语音发送时未识别到文字（发送端语音识别不可用）';
+      n.textContent = '这条语音没有文字记录，可以现在补转：';
       div.appendChild(n);
+      var btn = document.createElement('button');
+      btn.className = 'rm-vtt';
+      btn.textContent = '离线转写';
+      btn.style.marginLeft = '8px';
+      btn.onclick = function (e) {
+        e.stopPropagation();
+        var b = (card.__state && card.__state.blob) || mediaBlobs[m.file];
+        var run = function (blob) {
+          btn.disabled = true;
+          btn.textContent = '转写中…';
+          n.textContent = '正在下载模型 / 转写，首次会慢一点…';
+          transcribeBlob(blob).then(function (t2) {
+            if (!t2) { n.textContent = '还是没识别出文字，可能这段太短或太吵'; btn.disabled = false; btn.textContent = '重试'; return; }
+            m.transcript = t2;
+            saveCache();
+            render(true);
+            // 消息文件是不可变的（每条消息一个新文件），补转的文字只存本地缓存
+          }).catch(function (err) {
+            n.textContent = '离线识别失败：' + (err && err.message ? err.message : err);
+            btn.disabled = false;
+            btn.textContent = '重试';
+          });
+        };
+        if (b && b.size) run(b);
+        else loadMedia(m, card, function (bb) { if (bb && bb.size) run(bb); });
+      };
+      div.appendChild(btn);
     }
     card.appendChild(div);
     card.__tr = div;
@@ -1632,7 +1864,7 @@
     if (camQueue) { camQueue.push(cb); return; }
     camQueue = [cb];
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.12';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.13';
     sc.onload = function () {
       var q = camQueue || [];
       camQueue = null;
@@ -1867,9 +2099,15 @@
         if (!b.size) { tipClear(); tipText('录音为空，未发送', 'warn'); return; }
         var dur = Math.round((Date.now() - rec.start) / 1000);
         // v3.11：识别与上传并行，最多等 900ms 让最后的 final 结果落地
+        // v3.13：浏览器识别没给结果时，交给离线 Whisper 兜底转写（免费、无 key）
         var txtP = new Promise(function (resolve) {
           if (!srBox) { resolve(''); return; }
           setTimeout(function () { resolve(String(srBox.txt || '').trim()); }, 900);
+        }).then(function (t) {
+          if (t) return t;
+          if (asrMode() === 'browser') return '';
+          tipClear(); tipText('浏览器识别无结果，正在用离线识别转写语音…', 'warn');
+          return transcribeBlob(b).catch(function () { return ''; });
         });
         tipClear();
         tipText('正在上传语音…');
@@ -1948,9 +2186,21 @@
     });
   }
 
-  // 语音输入（识别转文字填入输入框，不自动发送）
+  // ── 语音输入（识别转文字，填进输入框，不自动发送）v3.13 ──
+  // 引擎三档（存 fh:room:asr）：
+  //   auto    先试浏览器识别，连不上自动切离线
+  //   browser 浏览器 Web Speech（免费，但 Chrome 走 Google 云，国内基本连不上）
+  //   whisper 浏览器内离线 Whisper（免费、无 key，模型首次下载后完全本地跑）
   var srOn = false;
   var srObj = null;
+  var dict = null;
+  var asrPipe = null, asrLoading = null;
+  var WHISPER_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+
+  function asrMode() {
+    var m = read(K_ASR, 'auto');
+    return (m === 'browser' || m === 'whisper') ? m : 'auto';
+  }
   function srReset() {
     srOn = false; srObj = null;
     micBtn.classList.remove('on'); micBtn.textContent = '🎤';
@@ -1960,61 +2210,208 @@
     if (k === 'not-allowed' || k === 'service-not-allowed') return '麦克风权限被拒绝：点地址栏 🔒 允许麦克风后重试';
     if (k === 'no-speech') return '没有听到声音，靠近麦克风再说一次';
     if (k === 'audio-capture') return '没有可用的麦克风';
-    if (k === 'network') return '语音识别服务连不上（浏览器语音服务需要联网）';
+    if (k === 'network') return '浏览器语音服务连不上（Chrome 走 Google 云）';
     if (k === 'language-not-supported') return '浏览器不支持中文语音识别';
     return '语音识别失败：' + (k || '未知错误');
   }
-  function srToggle() {
-    if (!SR) { tipClear(); tipText('当前浏览器不支持语音识别', 'warn'); return; }
-    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srReset(); tipClear(); return; }
-    // v3.11：先显式请求麦克风权限，否则 SpeechRecognition 可能静默失败，看起来像「点了没反应」
-    if (window.isSecureContext === false) { tipClear(); tipText('当前页面不是 https/localhost，语音识别不可用', 'warn'); return; }
-    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-      tipClear(); tipText('浏览器不支持麦克风采集', 'warn'); return;
+  function pickAudioMime() {
+    var list = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    for (var i = 0; i < list.length; i++) {
+      try { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(list[i])) return list[i]; } catch (e) {}
     }
-    tipClear(); tipText('正在请求麦克风权限…');
-    micBtn.textContent = '…';
+    return '';
+  }
+  function maskBtn(on) {
+    micBtn.classList.toggle('on', !!on);
+    micBtn.textContent = on ? '⏹' : '🎤';
+  }
+  // 录音 blob → 16kHz 单声道 Float32（Whisper 要的格式）
+  function blobToPcm(blob) {
+    return blob.arrayBuffer().then(function (buf) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) throw new Error('浏览器不支持音频解码');
+      var ctx = new AC({ sampleRate: 16000 });
+      return ctx.decodeAudioData(buf.slice(0)).then(function (ab) {
+        var ch = ab.numberOfChannels || 1, len = ab.length, out = new Float32Array(len);
+        for (var c = 0; c < ch; c++) {
+          var d = ab.getChannelData(c);
+          for (var i = 0; i < len; i++) out[i] += d[i] / ch;
+        }
+        try { ctx.close(); } catch (e) {}
+        return out;
+      });
+    });
+  }
+  function asrProgress(p) {
+    if (!p) return;
+    if (p.status === 'progress' && p.progress != null) {
+      var pct = Math.max(1, Math.round(Number(p.progress) || 0));
+      tipClear(); tipText('正在下载离线识别模型… ' + pct + '%（首次约 80MB，之后走本地缓存）', 'warn');
+    } else if (p.status === 'done' || p.status === 'ready') {
+      tipClear(); tipText('模型就绪，开始转写…', 'warn');
+    }
+  }
+  // 懒加载 transformers.js + Whisper（jsdelivr 取代码，hf-mirror 取权重，免 key）
+  // 量化档位 / 模型依次降级，避免某个仓库缺 q8 文件就整条链路失败
+  var WHISPER_TRY = [
+    { model: 'Xenova/whisper-base', dtype: 'q8' },
+    { model: 'Xenova/whisper-base', dtype: 'q4' },
+    { model: 'Xenova/whisper-tiny', dtype: 'q8' }
+  ];
+  function loadAsr() {
+    if (asrPipe) return Promise.resolve(asrPipe);
+    if (asrLoading) return asrLoading;
+    asrLoading = import(WHISPER_CDN).then(function (mod) {
+      try { mod.env.allowLocalModels = false; } catch (e) {}
+      try { mod.env.useBrowserCache = true; } catch (e) {}
+      try { mod.env.remoteHost = 'https://hf-mirror.com'; } catch (e0) {}
+      var i = 0, lastErr = null;
+      function tryNext() {
+        if (i >= WHISPER_TRY.length) return Promise.reject(lastErr || new Error('离线模型加载失败'));
+        var c = WHISPER_TRY[i++];
+        return mod.pipeline('automatic-speech-recognition', c.model, {
+          dtype: c.dtype,
+          progress_callback: asrProgress
+        }).catch(function (e) {
+          lastErr = e;
+          try { console.warn('[room] whisper 加载失败，换下一档：', c.model, c.dtype, e); } catch (e2) {}
+          return tryNext();
+        });
+      }
+      return tryNext();
+    }).then(function (p) {
+      asrPipe = p; asrLoading = null;
+      return p;
+    }, function (e) {
+      asrLoading = null;
+      throw e;
+    });
+    return asrLoading;
+  }
+  function transcribeBlob(blob) {
+    return blobToPcm(blob).then(function (pcm) {
+      return loadAsr().then(function (asr) {
+        return asr(pcm, { language: 'chinese', task: 'transcribe', chunk_length_s: 30, stride_length_s: 5 });
+      });
+    }).then(function (out) {
+      return String((out && out.text) || '').trim();
+    });
+  }
+  // 离线听写：录一段 → 停止后整段转写
+  function startDict() {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      tipClear(); tipText('当前浏览器不支持麦克风采集', 'warn'); return;
+    }
+    tipClear(); tipText('正在请求麦克风…');
     navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
-      try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
-      startSrListen();
+      var mime = pickAudioMime(), mr;
+      try { mr = new MediaRecorder(s, mime ? { mimeType: mime } : undefined); }
+      catch (e) {
+        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e2) {}
+        tipClear(); tipText('录音初始化失败', 'warn'); return;
+      }
+      var box = { mr: mr, chunks: [], stream: s, base: ta.value };
+      dict = box;
+      maskBtn(true);
+      tipClear(); tipText('离线听写中…（说完再点 🎤 停止，会自动转成文字）', 'warn');
+      mr.ondataavailable = function (e) { if (e.data && e.data.size) box.chunks.push(e.data); };
+      mr.onstop = function () {
+        try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {}
+        var b = new Blob(box.chunks, { type: mime || 'audio/webm' });
+        dict = null;
+        maskBtn(false);
+        if (box.cancelled) return;
+        if (!b.size) { tipClear(); tipText('没录到声音', 'warn'); return; }
+        tipClear(); tipText('正在转写…（首次会下载模型）', 'warn');
+        transcribeBlob(b).then(function (txt) {
+          ta.value = box.base + (txt || '');
+          grow();
+          tipClear();
+          if (txt) tipText('已转成文字，可修改后再发送', 'ok');
+          else tipText('没识别出文字，靠近麦克风再说一次', 'warn');
+        }).catch(function (e) {
+          tipClear();
+          tipText('离线识别失败：' + (e && e.message ? e.message : e) + '（可切到「浏览器」引擎试试）', 'warn');
+        });
+      };
+      mr.start(500);
     }).catch(function (err) {
-      srReset();
       var n = err && err.name ? err.name : '';
       tipClear();
       tipText(n === 'NotAllowedError' ? '麦克风权限被拒绝：点地址栏 🔒 允许麦克风后重试'
         : n === 'NotFoundError' ? '没有可用的麦克风' : ('无法访问麦克风：' + (n || '未知错误')), 'warn');
     });
   }
-  function startSrListen() {
-    var r;
-    try { r = new SR(); } catch (e) { srReset(); tipClear(); tipText('语音识别启动失败', 'warn'); return; }
-    srObj = r;
+  function stopDict() { if (dict) { try { dict.mr.stop(); } catch (e) {} } }
+  // 浏览器识别：continuous + 自动续接；失败时（auto 模式）直接转离线
+  function startBrowserSr() {
+    var base = ta.value, committed = '';
+    var dead = false, restarts = 0;
     srOn = true;
-    micBtn.classList.add('on');
-    micBtn.textContent = '⏹';
-    tipClear();
-    tipText('聆听中…（再点 🎤 停止）', 'warn');
-    var live = '';
-    r.lang = 'zh-CN';
-    r.interimResults = true;
-    r.continuous = false;
-    r.onresult = function (e) {
-      var t = '';
-      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      if (e.results[e.results.length - 1] && e.results[e.results.length - 1].isFinal) live = t;
-      ta.value = (ta.value.slice(0, Math.max(0, ta.value.length - live.length)) + t);
-      grow();
-    };
-    r.onerror = function (e) {
-      tipClear(); tipText(srErrText(e && e.error), 'warn');
-      srReset();
-    };
-    r.onend = function () {
-      if (!srOn) return;
-      srReset();
-      tipClear();
-    };
-    try { r.start(); } catch (e) { srReset(); tipClear(); tipText('语音识别启动失败（需要用户手势）', 'warn'); }
+    maskBtn(true);
+    function spawn() {
+      if (!srOn || dead) return;
+      var r;
+      try { r = new SR(); } catch (e) { dead = true; srReset(); return; }
+      srObj = r;
+      r.lang = 'zh-CN';
+      r.interimResults = true;
+      r.continuous = true;
+      r.onresult = function (e) {
+        var fin = '', itr = '';
+        for (var i = e.resultIndex; i < e.results.length; i++) {
+          var res = e.results[i];
+          if (res.isFinal) fin += res[0].transcript; else itr += res[0].transcript;
+        }
+        if (fin) committed += fin;
+        ta.value = base + committed + itr;
+        grow();
+      };
+      r.onerror = function (e) {
+        var k = e && e.error;
+        if (k === 'no-speech' || k === 'aborted') return;
+        if (k === 'not-allowed' || k === 'service-not-allowed' || k === 'audio-capture') {
+          dead = true; srReset(); tipClear(); tipText(srErrText(k), 'warn'); return;
+        }
+        if (k === 'network') {
+          dead = true; srReset();
+          if (asrMode() === 'browser') {
+            tipClear(); tipText('浏览器语音服务连不上；可到 ◐ 面板把引擎切成「离线」', 'warn');
+            return;
+          }
+          tipClear(); tipText('浏览器语音服务连不上，已自动切到离线识别（免费，首次需下载模型）…', 'warn');
+          startDict();
+          return;
+        }
+        dead = true; srReset(); tipClear(); tipText(srErrText(k), 'warn');
+      };
+      r.onend = function () {
+        if (!srOn || dead) return;
+        if (restarts++ > 60) { srReset(); return; }
+        // Chrome 静音约 60 秒会断，自动续上
+        setTimeout(function () { if (srOn && !dead) spawn(); }, 120);
+      };
+      try { r.start(); } catch (e) {
+        dead = true; srReset(); tipClear(); tipText('语音识别启动失败（需要用户手势）', 'warn');
+      }
+    }
+    spawn();
+  }
+  function srToggle() {
+    if (dict) { stopDict(); return; }
+    if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srReset(); tipClear(); return; }
+    if (window.isSecureContext === false) { tipClear(); tipText('当前页面不是 https/localhost，语音识别不可用', 'warn'); return; }
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      tipClear(); tipText('浏览器不支持麦克风采集', 'warn'); return;
+    }
+    var mode = asrMode();
+    if (mode === 'whisper') { startDict(); return; }
+    if (mode === 'browser') {
+      if (!SR) { tipClear(); tipText('当前浏览器不支持语音识别，可到 ◐ 面板切「离线」', 'warn'); return; }
+      startBrowserSr(); return;
+    }
+    if (!SR) { tipClear(); tipText('该浏览器没有内置识别，改用离线识别…', 'warn'); startDict(); return; }
+    startBrowserSr();
   }
   micBtn.onclick = srToggle;
   recBtn.onclick = recToggle;
@@ -2063,6 +2460,7 @@
     // v3.12：关闭 / 最小化时立即停止所有播放（含语音）并收起相机
     stopAllPlayback();
     if (srOn) { try { srObj && srObj.abort(); } catch (e) {} srReset(); }
+    if (dict) { dict.cancelled = true; try { dict.mr.stop(); } catch (e) {} }
     abortRec();
     if (full) setFull(false);
     saveRect();

@@ -1,4 +1,4 @@
-# fuulea_hack
+﻿# fuulea_hack
 
 《文言诗文·课下注释闯关》的单文件页面补丁集。每个功能一个独立脚本，由 `loader.js` 拉起一个浮动面板按需加载。
 
@@ -27,6 +27,20 @@
 > 为什么不用 GitLab `/-/raw/`：它返回 `text/plain` + `nosniff`，`<script>` 标签拒执行。jsDelivr 走 GitHub 并给正确的 JS MIME，所以当主源。
 >
 > `cdn.jsdelivr.net` 在国内常被重置，所以注入串默认用 `fastly.jsdelivr.net`；loader 自身与模块加载会按 `cdn` → `fastly` → `gcore` → raw.githubusercontent → GitLab API 依次重试。
+
+## v3.13
+
+- **修「聊天室录的视频能发、但自己/别人/后台都看不了」**：真正原因不是容器选错，而是**下载回来的 Blob 类型不对**——`gitReq` 用 `responseType='blob'` 取 GitLab 的 raw 文件时，`Blob.type` 直接继承服务端 `Content-Type`（二进制常被回成 `application/octet-stream`/`text/plain`），`<video>`/`<audio>` 拿到这种 MIME 直接拒绝播放。所以以前换回 WebM 也一样看不了。现在 `loadMedia` 下载后按「消息里记的 mime → 文件扩展名」重新 `new Blob([...], {type})` 再缓存/播放，老消息（没记 mime）靠扩展名推断。
+- **录像容器改成 WebM(VP8/Opus) 优先、MP4 兜底**：Chrome 的 MediaRecorder 输出 fragmented MP4，再叠加 `start(500)` 分片拼 Blob，容易得到 moov 残缺的文件。现在 `mods/cam.js` 与 `mods/media.js` 统一优先 WebM；只有浏览器不支持 WebM（Safari）才用 MP4，且 **MP4 不分片**。
+- **录像先自检再发送**：录完先本地 `loadedmetadata` 试解一次（6 秒超时），解不了就提示「这段录像编码异常（本机都解不了），已取消发送」并不上传，不再把坏文件发出去；扩展名按真实 `blob.type` 决定（以前一律写 `.mp4`，内容与扩展名不符，下载后播放器同样打不开）。
+- **相机页录像补声音**：`mods/media.js` 以前 `getUserMedia({audio:false})`，录出来全是哑的；现在单独申请麦克风并与视频轨合成，拒绝麦克风则静音录制。比特率从 12 Mbps 降到 3 Mbps 并加 60 秒上限（12 Mbps 一分钟就超 25MB 上限）。
+- **视频播放失败不再一片黑**：聊天室视频层解码失败时显示「这段视频本机解不了（文件名）：点上方 ⏬ 下载…」；`mods/media.js` 的查看器提示同步改写。
+- **聊天室可以调透明度 / 黑白背景**：标题栏新增 🌓（深色 / 浅色 / 跟随系统，键 `fh:room:theme`）与 ◐（背景透明度 15%–100%，键 `fh:room:op`）。底色单独一层 `.rm-bg`，透明度只淡背景不淡文字；硬编码颜色全部改成 CSS 变量，浅色主题一套换掉。`#__rm` 加了 `data-fh-skip="1"`，loader 的通用窗口注入不再往里塞按钮。
+- **聊天室窗口可以拖出画面外**：`clampRect` 不再把窗口四边顶死在视口内，改成只保证「标题栏还有 120px 宽 / 24px 高在屏内」，拖出去一半、留一条边都能拖回来；拖动、载入、缩放共用同一套钳制。
+- **语音转文字新增免费离线引擎**：没有 API Key 也能用——`@huggingface/transformers`（jsdelivr 取代码）+ Whisper（`Xenova/whisper-base`，权重走 `hf-mirror.com`，首次约 80MB，之后浏览器缓存），全程本地跑、免 key。🎤 面板可选「自动 / 浏览器 / 离线」引擎（键 `fh:room:asr`）：自动模式先用浏览器识别，遇到 `network`（Chrome 走 Google 云，国内基本连不上）自动切离线。离线听写是「录一段 → 停止 → 整段转写 → 填进输入框」，可改完再发。
+- **浏览器识别修连续说话**：以前 `continuous=false`，且 interim 结果用「减长度」拼接会重复/丢字。现在 `continuous=true` + `onend` 自动续接（静音 60 秒被 Chrome 掐断也能续上），文字用「已定稿 + 当前临时」重算，不再重复。
+- **语音消息的转写兜底**：发语音消息时若浏览器识别没出字，自动用离线 Whisper 补一份 transcript 随消息上传；老语音消息点「转文字」若没有文字，会出现「离线转写」按钮，转完只写进本地缓存（消息文件不可变，不回头改仓库）。
+- 版本号 `TAG` / AI 头栏 / 聊天室徽标 / 主面板标签统一升到 3.13。
 
 ## v3.12
 

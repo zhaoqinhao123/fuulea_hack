@@ -1,4 +1,4 @@
-/* fuulea_hack loader — 二级面板（学习/查看/工具/AI/便签）+ 拖动 + 小窗 */
+﻿/* fuulea_hack loader — 二级面板（学习/查看/工具/AI/便签）+ 拖动 + 小窗 */
 (function () {
   // 破上限：页面的分段表只有 4 项，补到 8 项后第 5 只起也能正常自动分级。
   // 规律：SEG_START[i+1] = SEG_START[i] + PET_REQ[i] + 100
@@ -1157,7 +1157,7 @@
     ],
     'chat': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.12', 'mods/ai.js']
+      ['🤖 AI 网页 · v3.13', 'mods/ai.js']
     ],
     '白板': [
       ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]

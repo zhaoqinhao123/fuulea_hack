@@ -106,7 +106,7 @@
     share.textContent = '📤';
     share.style.cssText = 'width:46px;height:44px;border:0;border-radius:10px;background:transparent;color:#bbb;font-size:17px;cursor:pointer';
     share.onclick = function () {
-      var fname = name || (blob.type.indexOf('video') === 0 ? 'record.mp4' : 'photo.png');
+      var fname = name || (blob.type.indexOf('video') === 0 ? (/mp4/.test(blob.type) ? 'record.mp4' : 'record.webm') : 'photo.png');
       var file;
       try { file = new File([blob], fname, { type: blob.type || 'application/octet-stream' }); }
       catch (e) { file = null; }
@@ -187,7 +187,7 @@
         var tip = document.createElement('div');
         tip.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#aaa;font-size:13px;line-height:1.9';
         tip.innerHTML = '这个浏览器解不了这段视频的编码（' + (blob.type || '未知') + '）<br>' +
-          '<span style="opacity:.6;font-size:12px">点右上角 ⤓ 保存，用系统播放器打开</span>';
+          '<span style="opacity:.6;font-size:12px">点右上角 ⤓ 保存后，用系统播放器或电脑上的 Chrome 打开</span>';
         s.body.append(tip);
       };
       s.body.append(v);
@@ -326,11 +326,16 @@
     tools.append(focusBox);
 
     var stream = null, track = null, facing = 'environment', recorder = null, chunks = [], mime = '';
+    var micStream = null, recTimer = 0, recStartAt = 0, closing = false;
     var nativeZoom = false, zMin = 1, zMax = 3, zStep = 0.1, zoom = 1;
     var focusCaps = null;
 
+    // v3.13：和 mods/cam.js 保持一致 —— WebM(VP8/Opus) 优先，MP4 只在浏览器不支持 WebM 时兜底。
+    // MP4 分片/拼接最容易产出 moov 残缺的文件（录完自己都放不了），WebM 才是稳的。
     function pickMime() {
-      var list = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+      var list = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm',
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4'];
       for (var i = 0; i < list.length; i++) {
         if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(list[i])) return list[i];
       }
@@ -471,6 +476,7 @@
 
     rec.onclick = function () {
       if (!stream) return;
+      closing = false;
       if (recorder && recorder.state === 'recording') {
         recorder.stop();
         rec.textContent = '🎥 录像';
@@ -480,21 +486,50 @@
       if (typeof MediaRecorder === 'undefined') return alert('当前浏览器不支持录像');
       chunks = [];
       mime = pickMime();
-      try {
-        recorder = new MediaRecorder(stream, mime ? {
-          mimeType: mime, videoBitsPerSecond: 12000000, audioBitsPerSecond: 128000
-        } : { videoBitsPerSecond: 12000000, audioBitsPerSecond: 128000 });
-      } catch (e) { return alert('录像失败：' + e.message); }
-      recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
-      recorder.onstop = function () {
-        var type = (chunks[0] && chunks[0].type) || mime || 'video/webm';
-        var b = new Blob(chunks, { type: type });
-        if (!b.size) return alert('这段没录到内容，试试重新录制');
-        view(b, /mp4/.test(type) ? 'record.mp4' : 'record.webm');
-      };
-      recorder.start();
-      rec.textContent = '⏹ 停止';
-      rec.style.background = '#7a2b2b';
+      rec.disabled = true;
+      function stopMic() {
+        if (recTimer) { clearInterval(recTimer); recTimer = 0; }
+        if (micStream) { try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} micStream = null; }
+      }
+      function begin(extra) {
+        rec.disabled = false;
+        // v3.13：以前是 audio:false —— 相机页录出来全是哑的。麦克风单独取，混进视频轨一起录。
+        if (closing) return;
+        var rs = stream;
+        if (extra && extra.getAudioTracks && extra.getAudioTracks().length) {
+          rs = new MediaStream(stream.getVideoTracks().concat(extra.getAudioTracks()));
+        }
+        try {
+          recorder = new MediaRecorder(rs, mime ? {
+            mimeType: mime, videoBitsPerSecond: 3000000, audioBitsPerSecond: 96000
+          } : { videoBitsPerSecond: 3000000, audioBitsPerSecond: 96000 });
+        } catch (e) { rec.disabled = false; return alert('录像失败：' + e.message); }
+        recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        recorder.onstop = function () {
+          stopMic();
+          rec.textContent = '🎥 录像';
+          rec.style.background = '#26262c';
+          var type = (chunks[0] && chunks[0].type) || mime || 'video/webm';
+          var b = new Blob(chunks, { type: type });
+          var dur = Math.round((Date.now() - recStartAt) / 1000);
+          if (!b.size) return alert('这段没录到内容，试试重新录制');
+          // v3.13：名字按真实容器定，别再一律 .mp4（扩展名和内容不符，下载后播放器同样打不开）
+          view(b, /mp4/.test(type) ? 'record.mp4' : 'record.webm');
+        };
+        try { recorder.start(); } catch (e) { stopMic(); rec.disabled = false; return alert('录像失败：' + e.message); }
+        recStartAt = Date.now();
+        rec.textContent = '⏹ 停止';
+        rec.style.background = '#7a2b2b';
+        // v3.13：60 秒上限，避免 12Mbps 的老码率录出超大文件
+        recTimer = setInterval(function () {
+          if (recorder && recorder.state === 'recording' && Date.now() - recStartAt > 60000) {
+            try { recorder.stop(); } catch (e) {}
+          }
+        }, 1000);
+      }
+      // 没有麦克风/被拒绝也别拦住录像，静默录即可
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (m) { micStream = m; begin(m); })
+        .catch(function () { begin(null); });
     };
 
     flip.onclick = function () {
@@ -512,7 +547,9 @@
 
     // 关闭时释放摄像头 / 收尾正在录的片段
     function cleanup() {
+      closing = true;
       try { if (recorder && recorder.state === 'recording') recorder.stop(); } catch (e) {}
+      if (micStream) { try { micStream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} micStream = null; }
       if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
       stream = null;
       track = null;

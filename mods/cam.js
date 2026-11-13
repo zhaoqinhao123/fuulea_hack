@@ -1,4 +1,4 @@
-/* 网页相机 v3.12 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
+/* 网页相机 v3.13 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 分辨率选择）
    用法：
      window.__fhCam.open({
        title: '拍照',
@@ -22,6 +22,8 @@
     { v: 1280, l: '720P' }
   ];
   var MAX_VIDEO = 25 * 1024 * 1024;
+  var MAX_SEC = 60;
+  var V_BPS = 2800000;
 
   function readRes() {
     var v = 0;
@@ -52,13 +54,40 @@
     var d = new Date(), p = function (n) { return ('0' + n).slice(-2); };
     return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
   }
+  // v3.13 修「录完看不了」：MP4 只做兜底。
+  // Chrome 的 MediaRecorder 输出的是 fragmented MP4（moof 分片），再叠加分片录制（start(500)）
+  // 拼 Blob，很容易得到 moov 不完整的文件 —— 本机 <video>、下载后的播放器、后台都解不了。
+  // WebM(VP8/Opus) 才是稳的容器；只有浏览器完全不支持 WebM 时才退回 MP4（Safari）。
   function pickVideoMime() {
-    var list = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8', 'video/webm'];
+    var list = [
+      'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm',
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4'
+    ];
     for (var i = 0; i < list.length; i++) {
       try { if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(list[i])) return list[i]; } catch (e) {}
     }
     return '';
+  }
+  // 录完先自检：blob 连元数据都读不出来 = 文件是坏的，别传上去（以前就是这么把坏文件发出去的）
+  function checkPlayable(blob, cb) {
+    var u = '';
+    try { u = URL.createObjectURL(blob); } catch (e) { cb(false); return; }
+    var done = false, vd = document.createElement('video');
+    vd.muted = true;
+    vd.preload = 'metadata';
+    function finish(ok) {
+      if (done) return;
+      done = true;
+      try { vd.removeAttribute('src'); vd.load(); } catch (e) {}
+      try { URL.revokeObjectURL(u); } catch (e) {}
+      cb(ok);
+    }
+    vd.onloadedmetadata = function () { finish(true); };
+    vd.onloadeddata = function () { finish(true); };
+    vd.onerror = function () { finish(false); };
+    setTimeout(function () { finish(false); }, 6000);
+    try { vd.src = u; } catch (e) { finish(false); }
   }
 
   var S = null;   // 当前实例状态
@@ -334,10 +363,11 @@
         if (s.mic) tracks = tracks.concat(s.mic.getAudioTracks());
         var mixed = new MediaStream(tracks);
         var mime = pickVideoMime();
+        var isMp4 = /mp4/.test(mime);
         try {
           s.recorder = new MediaRecorder(mixed, mime ? {
-            mimeType: mime, videoBitsPerSecond: 6000000, audioBitsPerSecond: 96000
-          } : { videoBitsPerSecond: 6000000, audioBitsPerSecond: 96000 });
+            mimeType: mime, videoBitsPerSecond: V_BPS, audioBitsPerSecond: 96000
+          } : { videoBitsPerSecond: V_BPS, audioBitsPerSecond: 96000 });
         } catch (e) {
           s.recorder = null;
           rec.disabled = false;
@@ -371,11 +401,20 @@
           }
           var mp4 = /mp4/.test(type);
           var name = 'rec-' + stamp() + (mp4 ? '.mp4' : '.webm');
-          toast(s, '录像完成 ' + mmss(dur) + ' · ' + bytes(b.size));
-          try { if (s.opts.onVideo) s.opts.onVideo(b, { name: name, mime: type, size: b.size, dur: dur }); }
-          catch (e) { toast(s, '处理录像出错：' + (e && e.message ? e.message : e), true); }
+          toast(s, '正在检查录像…');
+          // v3.13：坏文件不发送（先本地解一次，能读出元数据再传）
+          checkPlayable(b, function (ok) {
+            if (!ok) {
+              toast(s, '这段录像编码异常（本机都解不了），已取消发送，请重录或换 720P 再试', true);
+              return;
+            }
+            toast(s, '录像完成 ' + mmss(dur) + ' · ' + bytes(b.size));
+            try { if (s.opts.onVideo) s.opts.onVideo(b, { name: name, mime: type, size: b.size, dur: dur }); }
+            catch (e) { toast(s, '处理录像出错：' + (e && e.message ? e.message : e), true); }
+          });
         };
-        try { s.recorder.start(500); }
+        // v3.13：MP4 不分片（分片拼接正是坏文件的主因）；WebM 分片没问题，顺便看体积
+        try { isMp4 ? s.recorder.start() : s.recorder.start(500); }
         catch (e) {
           s.recorder = null;
           rec.disabled = false;
