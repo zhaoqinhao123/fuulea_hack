@@ -1,4 +1,4 @@
-/* 聊天室（共享）v3.17 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
+/* 聊天室（共享）v3.18 — 独立于 AI 网页的浮窗；消息存 GitLab message/，图片/视频/语音存 media/ */
 (function () {
   'use strict';
 
@@ -951,7 +951,7 @@
   title.textContent = '聊天室（共享）';
   var badge = document.createElement('span');
   badge.className = 'rm-badge';
-  badge.textContent = 'v3.17';
+  badge.textContent = 'v3.18';
   var sp = document.createElement('div');
   sp.className = 'rm-sp';
   // v3.13：主题（深/浅/跟随系统）+ 透明度，仿主面板
@@ -1054,10 +1054,10 @@
   var fileBtn = document.createElement('button');
   fileBtn.className = 'rm-cbtn';
   fileBtn.textContent = '📎';
-  fileBtn.title = '发图片 / 视频';
+  fileBtn.title = '发图片 / 视频 / 音频';
   var fileInput = document.createElement('input');
   fileInput.type = 'file';
-  fileInput.accept = 'image/*,video/*';
+  fileInput.accept = 'image/*,video/*,audio/*';
   fileInput.multiple = true;
   fileInput.style.display = 'none';
   var recBtn = document.createElement('button');
@@ -1078,7 +1078,7 @@
   var albumBtn = document.createElement('button');
   albumBtn.className = 'rm-cbtn';
   albumBtn.textContent = '🖼';
-  albumBtn.title = '从本机相册选择（拍照 / 录像会自动存进去）';
+  albumBtn.title = '从本机相册选择（图片 / 视频 / 录音）';
   tools.append(micBtn, camBtn, albumBtn, fileBtn, recBtn);
   inputRow.append(ta, sendBtn);
   compose.append(tools, inputRow);
@@ -2002,7 +2002,7 @@
     if (camQueue) { camQueue.push(cb); return; }
     camQueue = [cb];
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.17';
+    sc.src = (MOD_BASE || '') + '/mods/cam.js?v=3.18';
     sc.onload = function () {
       var q = camQueue || [];
       camQueue = null;
@@ -2126,7 +2126,7 @@
       tipText(msg || '相册模块加载失败（检查网络 / CDN）', 'warn');
     }
     var sc = document.createElement('script');
-    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.17';
+    sc.src = (MOD_BASE || '') + '/mods/album.js?v=3.18';
     sc.onload = function () { if (window.__fhAlbum) loaded(); else fail(); };
     sc.onerror = function () {
       if (window.__fhLoadMod) {
@@ -2151,18 +2151,22 @@
 
   function uploadAlbumRecord(rec, blob) {
     return new Promise(function (resolve, reject) {
+      var kind = rec.kind === 'video' ? 'video' : (rec.kind === 'voice' ? 'voice' : 'image');
+      var what = kind === 'video' ? '视频' : (kind === 'voice' ? '录音' : '图片');
       if (blob.size > 25 * 1048576) {
-        reject(new Error(rec.kind === 'video' ? '视频超过 25MB 上限（' + fmtSize(blob.size) + '）' : '图片超过 25MB 上限（' + fmtSize(blob.size) + '）'));
+        reject(new Error(what + '超过 25MB 上限（' + fmtSize(blob.size) + '）'));
         return;
       }
-      uploadBlob(blob, rec.name || (rec.kind === 'image' ? 'photo.jpg' : 'record.webm'), function (e, path) {
+      var fallbackName = kind === 'image' ? 'photo.jpg' : (kind === 'video' ? 'record.webm' : 'voice.webm');
+      var fallbackMime = kind === 'image' ? 'image/jpeg' : (kind === 'video' ? 'video/webm' : 'audio/webm');
+      uploadBlob(blob, rec.name || fallbackName, function (e, path) {
         if (e) { reject(new Error(e)); return; }
         postMediaMsg({
           at: Date.now(), nick: myName(), owner: ownerTag(), text: '', image: '',
-          file: path, kind: rec.kind === 'video' ? 'video' : 'image',
+          file: path, kind: kind,
           name: rec.name || path.split('/').pop(), size: blob.size,
-          mime: blob.type || rec.type || (rec.kind === 'image' ? 'image/jpeg' : 'video/webm'),
-          dur: rec.kind === 'video' ? (rec.dur || 0) : 0
+          mime: blob.type || rec.type || fallbackMime,
+          dur: (kind === 'video' || kind === 'voice') ? (rec.dur || 0) : 0
         }).then(function (ok) {
           if (!ok) { reject(new Error('消息写入失败')); return; }
           try { window.__fhAlbum.update(rec.id, { remotePath: path }); } catch (e) {}
@@ -2223,6 +2227,7 @@
         window.__fhAlbum.open({
           mode: 'pick',
           multiple: true,
+          allowVoice: true,
           owner: ownerTag(),
           onPick: function (records, opts) { return sendAlbumRecords(records, opts); }
         });
@@ -2280,13 +2285,18 @@
     function next() {
       if (i >= list.length) { done(errs.length ? errs : null, out); return; }
       var f = list[i++];
-      var isImg = /^image\//.test(String(f.type || ''));
+      var mt = String(f.type || '');
+      var isImg = /^image\//.test(mt);
+      var kind = isImg ? 'image' : (/^audio\//.test(mt) ? 'voice' : (/^video\//.test(mt) ? 'video' : 'file'));
       var prep = isImg ? compressImageFile(f) : Promise.resolve(f);
       prep.then(function (b) {
-        if (!isImg && b.size > 25 * 1048576) { errs.push({ err: '视频超过 25MB 上限：' + f.name }); next(); return; }
+        if (!isImg && b.size > 25 * 1048576) {
+          errs.push({ err: (kind === 'video' ? '视频' : kind === 'voice' ? '录音' : '文件') + '超过 25MB 上限：' + f.name });
+          next(); return;
+        }
         uploadBlob(b, f.name || ('file' + mediaExt(b.type)), function (e, path) {
           if (e) { errs.push({ err: f.name + '：' + e }); next(); return; }
-          out.push({ file: path, name: f.name || path.split('/').pop(), size: b.size, mime: b.type, kind: isImg ? 'image' : 'video' });
+          out.push({ file: path, name: f.name || path.split('/').pop(), size: b.size, mime: b.type, kind: kind });
           next();
         });
       }).catch(function (e) { errs.push({ err: f.name + '：' + (e && e.message ? e.message : e) }); next(); });

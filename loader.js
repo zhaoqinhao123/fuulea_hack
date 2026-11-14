@@ -155,7 +155,7 @@
 
   // 自缓存：第一次注入后，把自身源码存进 localStorage，
   // 以后用 <img src=x onerror="eval(localStorage.fhL)"> 就能打开（45 字符）
-  var TAG = '3.17';
+  var TAG = '3.18';
 
   // 把自己这份源码存进 localStorage，供 44 字符短串 eval 用。
   function cacheSelf(done) {
@@ -1166,6 +1166,32 @@
     });
   }
 
+  // v3.18：常用 → 相册，直接进管理界面（不是聊天室那种选择器）
+  function openAlbumManage(btn) {
+    function show() {
+      if (!window.__fhAlbum || !window.__fhAlbum.open) { alert('相册模块加载失败（检查网络 / CDN）'); return; }
+      try {
+        window.__fhAlbum.ready().then(function () {
+          window.__fhAlbum.open({ mode: 'manage' });
+        }).catch(function (e) {
+          alert('相册打不开：' + (e && e.message ? e.message : e));
+        });
+      } catch (e) {
+        alert('相册打不开：' + (e && e.message ? e.message : e));
+      }
+    }
+    if (window.__fhAlbum) { show(); return; }
+    loadMod('mods/album.js', btn, show);
+  }
+
+  // v3.18：常用 → 录音机（独立小窗，录音自动存相册）
+  function openRecorder(btn) {
+    if (window.__fhRecorder) { try { window.__fhRecorder.open(); return; } catch (e) {} }
+    loadMod('mods/recorder.js', btn, function () {
+      if (window.__fhRecorder) { try { window.__fhRecorder.open(); } catch (e) {} }
+    });
+  }
+
   var GROUPS = {
     '学习': [
       ['✏️ 改名', 'mods/rename.js'],
@@ -1176,31 +1202,31 @@
       ['🔓 解锁4只', 'mods/unlock.js']
     ],
     '工具': [
-      ['🌐 网页', 'mods/embed.js'],
-      ['📷 相机', 'mods/media.js'],
-      ['🧭 探测', 'mods/probe.js'],
       ['📂 文件', 'mods/browser.js'],
+      ['🧭 探测', 'mods/probe.js'],
       ['📖 小说', 'mods/novel.js'],
-      ['🎵 音乐', 'mods/music.js'],
       ['🖼 图片', 'mods/img.js'],
       ['🧩 转印', 'mods/tile.js'],
       ['📦 存档', 'mods/dump.js'],
       ['🔒 遮罩', 'mods/peek.js'],
       ['📝 名单', 'mods/edit.js'],
       ['🧹 清答案', 'mods/clean.js'],
-      ['👤 账号（用户名 + PIN）', acctOpen],
+      ['👤 账号', acctOpen],
       ['⬆ 上传配置', uploadConfig],
       ['⬇ 更新配置', pullConfig],
-      ['🔄 版本更新', 'mods/update.js'],
+      ['💣 清空', 'mods/reset.js'],
       ['⏱ 解除限时', toggleLockFree],
-      ['💣 清空', 'mods/reset.js']
+      ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }, 1]
     ],
-    'chat': [
+    '常用': [
       ['💬 聊天室（共享）', openChatRoom],
-      ['🤖 AI 网页 · v3.17', 'mods/ai.js']
-    ],
-    '白板': [
-      ['🖌 白板（开发中）', function () { fhToast('🖌 白板功能开发中…'); }]
+      ['🤖 AI 对话', 'mods/ai.js'],
+      ['📷 相机', 'mods/media.js'],
+      ['🖼 相册', openAlbumManage],
+      ['🌐 网页', 'mods/embed.js'],
+      ['🎵 音乐', 'mods/music.js'],
+      ['🎙️ 录音机', openRecorder],
+      ['🔄 版本更新', 'mods/update.js']
     ],
     '便签': []
   };
@@ -1257,6 +1283,7 @@
       'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}',
       '#__fh .fh-mod:active{background:var(--fh-soft2);transform:scale(.97)}',
       '#__fh .fh-mod[disabled]{opacity:.5;cursor:progress;transform:none}',
+      '#__fh .fh-mod.fh-wide{grid-column:1/-1;text-align:center}',
       '#__fh .fh-ta{width:100%;min-height:210px;max-height:none;padding:10px;',
       'border:1px solid var(--fh-border);border-radius:11px;background:var(--fh-ta);',
       'color:var(--fh-text);font:12px/1.7 inherit;outline:none;resize:vertical}',
@@ -1378,8 +1405,9 @@
     if (GROUPS[name].length === 1) grid.style.gridTemplateColumns = '1fr';
     GROUPS[name].forEach(function (m) {
       var b = document.createElement('button');
-      b.className = 'fh-mod';
+      b.className = 'fh-mod' + (m[2] ? ' fh-wide' : '');
       b.textContent = (m[1] === toggleLockFree && lockFreeOn()) ? '🔓 限时已解除' : m[0];
+      if (m[1] === acctOpen) b.title = '账号（用户名 + PIN）';
       b.onclick = function () {
         if (typeof m[1] === 'function') { m[1](b); return; }
         b.disabled = true;

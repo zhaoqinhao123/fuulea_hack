@@ -1,9 +1,10 @@
-/* 本机相册 v3.17 — 独立 IndexedDB（fh_album），不再和音乐共用 fh_media
+/* 本机相册 v3.18 — 独立 IndexedDB（fh_album），不再和音乐共用 fh_media
    用途：
      window.__fhAlbum.save(blob, info)        保存原图 / 原视频，返回 id
      window.__fhAlbum.list({owner,kind})      列出当前身份的文件
      window.__fhAlbum.get(id) / remove(id) / update(id, patch) / clear()
-     window.__fhAlbum.open({mode:'pick'|'manage', multiple, owner, onPick})
+     window.__fhAlbum.open({mode:'pick'|'manage', multiple, owner, allowVoice, onPick})
+       allowVoice=true 时 picker 里也会出现「录音」；manage 永远显示录音。
    旧版把相册存在 fh_media（version 1），音乐模块却用同名库 version 2 且不建 media 表，
    导致相册写入 VersionError；这里只读旧库做一次迁移，绝不升级 / 删除 fh_media。
 */
@@ -292,7 +293,8 @@
     var s = document.createElement('style');
     s.id = 'fhaCss';
     s.textContent = [
-      '#fhaOv{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:14px;height:100vh;height:100dvh;overflow:hidden;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#e9e9ef}',
+      // 聊天室窗口的 z-index 也是 2147483647；相册在它之后挂到 body，必须同层才能盖住聊天室
+      '#fhaOv{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:14px;height:100vh;height:100dvh;overflow:hidden;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#e9e9ef}',
       '#fhaOv *{box-sizing:border-box}',
       // v3.15：用 grid 固定四行，body 是唯一可伸缩/滚动的行，底栏不会再被挤出卡片。
       '#fhaOv .fha-card{width:min(880px,100%);height:88vh;height:min(760px,calc(100dvh - 28px));max-height:calc(100dvh - 28px);display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;background:#17171d;border:1px solid rgba(255,255,255,.14);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px rgba(0,0,0,.6)}',
@@ -322,6 +324,7 @@
       '#fhaOv .fha-btn:disabled{opacity:.5;cursor:default}',
       '#fhaView{position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column}',
       '#fhaView .v{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}',
+      '#fhaView audio.v{flex:0 0 auto;width:min(560px,90%);height:54px;margin:auto;background:transparent}',
       '#fhaView .b{display:flex;gap:8px;justify-content:center;padding:12px;background:rgba(0,0,0,.72);flex-wrap:wrap}',
       '#fhaView .b button{height:34px;padding:0 14px;border:1px solid rgba(255,255,255,.22);border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font:12.5px/1 inherit;cursor:pointer}',
       '@media(max-width:560px){#fhaOv{padding:0}#fhaOv .fha-card{width:100%;height:100%;height:100dvh;max-height:none;border:0;border-radius:0}#fhaOv .fha-body{grid-template-columns:repeat(3,1fr);gap:6px;padding:8px}}'
@@ -350,9 +353,13 @@
     var filter = 'all';
     var sending = false;
     var loadSeq = 0;
+    // manager 永远能看录音；聊天室 picker 要显式 allowVoice 才显示。
+    var canVoice = opts.mode === 'manage' || !!opts.allowVoice;
 
     var root = el('div');
     root.id = 'fhaOv';
+    // 相册是全屏模态，不需要 loader 的 📌/◐/◱ 通用窗口壳
+    root.setAttribute('data-fh-skip', '1');
     var card = el('div', 'fha-card');
     var head = el('div', 'fha-head');
     var tit = el('div', 'fha-tit', opts.mode === 'manage' ? '本机相册' : '从相册选择');
@@ -365,7 +372,12 @@
     var bAll = el('button', 'on', '全部');
     var bImg = el('button', '', '图片');
     var bVid = el('button', '', '视频');
+    var bVoice = null;
     seg.append(bAll, bImg, bVid);
+    if (canVoice) {
+      bVoice = el('button', '', '录音');
+      seg.append(bVoice);
+    }
     var chkWrap = el('label', 'fha-chk');
     var chk = document.createElement('input');
     chk.type = 'checkbox';
@@ -399,11 +411,17 @@
       closeView();
       var v = el('div');
       v.id = 'fhaView';
+      // 预览层也是全屏模态，跳过 loader 的通用窗口按钮
+      v.setAttribute('data-fh-skip', '1');
       var media;
       var url = '';
       try { url = URL.createObjectURL(rec.blob); } catch (e) {}
       urls.push(url);
-      if (rec.kind === 'video' || rec.kind === 'voice') {
+      if (rec.kind === 'voice') {
+        media = document.createElement('audio');
+        media.controls = true;
+        media.autoplay = true;
+      } else if (rec.kind === 'video') {
         media = document.createElement('video');
         media.controls = true;
         media.autoplay = true;
@@ -449,8 +467,8 @@
       var list = filtered();
       if (!list.length) {
         body.append(el('div', 'fha-empty', opts.mode === 'manage'
-          ? '相册还是空的。\n用聊天室或相机拍照 / 录像后会自动保存到这里。'
-          : '相册还是空的。\n先用 📷 拍照或录像，文件会自动存进相册。'));
+          ? '相册还是空的。\n用聊天室、相机或录音机拍照 / 录像 / 录音后会自动保存到这里。'
+          : '相册还是空的。\n先用 📷 拍照 / 录像，或用 🎙️ 录音机录音，文件会自动存进相册。'));
         paintSel();
         return;
       }
@@ -479,7 +497,7 @@
         }
         var meta = el('span', 'fha-meta');
         meta.append(el('span', '', fmtSize(m.size)));
-        meta.append(el('span', '', m.kind === 'video' ? fmtDur(m.dur) : fmtAt(m.at)));
+        meta.append(el('span', '', (m.kind === 'video' || m.kind === 'voice') ? fmtDur(m.dur) : fmtAt(m.at)));
         b.append(meta);
         var dot = el('span', 'fha-dot', selected[m.id] ? '✓' : '');
         b.append(dot);
@@ -504,7 +522,9 @@
       status.textContent = '读取相册…';
       list({ owner: opts.owner || currentOwner() }).then(function (a) {
         if (seq !== loadSeq) return;
-        items = a;
+        // 不显示录音时（AI / 普通附件 picker），连「全部」里也要排除，
+        // 否则用户还是能选到一段录音。
+        items = canVoice ? a : a.filter(function (m) { return m.kind !== 'voice'; });
         render();
       }).catch(function (e) {
         if (seq !== loadSeq) return;
@@ -523,12 +543,13 @@
     }
     function setFilter(f, btn) {
       filter = f;
-      [bAll, bImg, bVid].forEach(function (x) { x.classList.toggle('on', x === btn); });
+      [bAll, bImg, bVid, bVoice].forEach(function (x) { if (x) x.classList.toggle('on', x === btn); });
       render();
     }
     bAll.onclick = function () { setFilter('all', bAll); };
     bImg.onclick = function () { setFilter('image', bImg); };
     bVid.onclick = function () { setFilter('video', bVid); };
+    if (bVoice) bVoice.onclick = function () { setFilter('voice', bVoice); };
     x.onclick = close;
     cancel.onclick = close;
     send.onclick = function () {

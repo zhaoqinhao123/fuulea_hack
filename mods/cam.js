@@ -1,4 +1,4 @@
-/* 网页相机 v3.17 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 比例/分辨率选择）
+/* 网页相机 v3.18 — 聊天室 / 媒体库共用（拍照 + 录像 + 麦克风 + 比例/分辨率选择）
    用法：
      window.__fhCam.open({
        title: '拍照',
@@ -35,7 +35,7 @@
       if (S) toast(S, '相册模块加载失败，这次拍摄不会自动保存', true);
     }
     var sc = document.createElement('script');
-    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.17';
+    sc.src = (CAM_BASE || '') + '/mods/album.js?v=3.18';
     sc.onload = function () { if (window.__fhAlbum) ok(); else fail(); };
     sc.onerror = fail;
     document.head.appendChild(sc);
@@ -156,7 +156,11 @@
 
   function el(tag, css, txt) {
     var d = document.createElement(tag);
-    if (css) d.style.cssText = css;
+    if (css) {
+      // v3.18：新布局传的是单个 class 名（cam-left 等），旧代码传的是 CSS 文本。
+      if (/^[A-Za-z][\w-]*$/.test(css)) d.className = css;
+      else d.style.cssText = css;
+    }
     if (txt != null) d.textContent = txt;
     return d;
   }
@@ -213,6 +217,69 @@
     s.toastT = setTimeout(function () { if (s) s.toastEl.style.opacity = '0'; }, 2200);
   }
 
+  // v3.18：左右栏布局。用 class 而不是一长串 inline style，窄屏才能用 media query 收窄。
+  function camCss() {
+    if (document.getElementById('__fhcamCss')) return;
+    var st = document.createElement('style');
+    st.id = '__fhcamCss';
+    st.textContent = [
+      '#__fhcam{position:fixed;inset:0;z-index:2147483647;background:#000;overflow:hidden;touch-action:none;',
+      'font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}',
+      '#__fhcam .cam-stagewrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000}',
+      '#__fhcam .cam-stage{position:relative;flex:0 0 auto;overflow:hidden;background:#000;box-shadow:0 0 0 1px rgba(255,255,255,.18)}',
+      '#__fhcam .cam-left{position:absolute;left:10px;top:50%;transform:translateY(-50%);z-index:6;width:104px;padding:7px;',
+      'border-radius:14px;background:rgba(0,0,0,.3);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);',
+      'display:flex;flex-direction:column;gap:7px}',
+      '#__fhcam .cam-lab{font:9.5px/1.2 inherit;color:#a7a7b4;letter-spacing:.6px;padding-left:2px}',
+      '#__fhcam .cam-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}',
+      '#__fhcam .cam-chip{height:28px;padding:0 3px;border:1px solid rgba(255,255,255,.18);border-radius:7px;',
+      'background:rgba(0,0,0,.3);color:#d6d6df;font:11px/1 inherit;cursor:pointer;white-space:nowrap}',
+      '#__fhcam .cam-chip.on{background:#fff;color:#111;border-color:#fff;font-weight:700}',
+      '#__fhcam .cam-chip:disabled{opacity:.45}',
+      '#__fhcam .cam-zoom{position:absolute;right:104px;top:50%;transform:translateY(-50%);z-index:6;width:44px;padding:6px 5px;',
+      'border-radius:999px;background:rgba(0,0,0,.48);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);',
+      'display:flex;flex-direction:column;align-items:center;gap:4px}',
+      '#__fhcam .cam-zbtn{width:30px;height:30px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.14);',
+      'color:#fff;font:17px/1 inherit;cursor:pointer}',
+      '#__fhcam .cam-zbtn:disabled{opacity:.4}',
+      '#__fhcam .cam-zslide{position:relative;width:32px;height:106px}',
+      '#__fhcam .cam-zslide input{position:absolute;left:50%;top:50%;width:102px;height:28px;margin:0;',
+      'transform:translate(-50%,-50%) rotate(-90deg);accent-color:#5b8dfa}',
+      '#__fhcam .cam-zslide input:disabled{opacity:.4}',
+      '#__fhcam .cam-zlab{font:10px/1.2 ui-monospace,monospace;color:#fff;white-space:nowrap}',
+      '#__fhcam .cam-shot{position:absolute;right:14px;top:50%;transform:translateY(-50%);z-index:7;width:76px;height:76px;',
+      'padding:0;border:4px solid rgba(255,255,255,.88);border-radius:50%;background:#fff;color:#111;font:700 15px/1 inherit;',
+      'cursor:pointer;box-shadow:0 0 0 4px rgba(0,0,0,.28),0 6px 20px rgba(0,0,0,.5);transition:transform .12s,background .12s}',
+      '#__fhcam .cam-shot:disabled{opacity:.8}',
+      '#__fhcam .cam-mode{position:absolute;left:50%;bottom:calc(22px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);',
+      'z-index:6;display:flex;gap:4px;padding:4px;border-radius:999px;background:rgba(0,0,0,.45);',
+      'backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}',
+      '#__fhcam .cam-mode button{height:30px;padding:0 14px;border:1px solid transparent;border-radius:999px;',
+      'background:transparent;color:#cfcfd8;font:12px/1 inherit;cursor:pointer}',
+      '#__fhcam .cam-mode button.on{background:#fff;color:#111;font-weight:700}',
+      '#__fhcam .cam-mode button:disabled{opacity:.5}',
+      '#__fhcam .cam-flip{position:absolute;left:14px;bottom:calc(22px + env(safe-area-inset-bottom,0px));z-index:6;',
+      'width:52px;height:52px;padding:0;border:1px solid rgba(255,255,255,.26);border-radius:50%;',
+      'background:rgba(28,28,34,.66);color:#fff;font:20px/1 inherit;cursor:pointer}',
+      '#__fhcam .cam-flip:disabled{opacity:.5}',
+      '#__fhcam .cam-x{position:absolute;right:12px;top:calc(10px + env(safe-area-inset-top,0px));z-index:31;',
+      'width:34px;height:34px;padding:0;border:0;border-radius:50%;background:rgba(0,0,0,.42);color:#fff;',
+      'font:17px/1 inherit;cursor:pointer;backdrop-filter:blur(6px)}',
+      '#__fhcam .cam-title{position:absolute;left:14px;top:calc(10px + env(safe-area-inset-top,0px));z-index:5;max-width:50%;',
+      'padding:7px 10px;border-radius:999px;background:rgba(0,0,0,.3);color:rgba(255,255,255,.82);font:11px/1.2 inherit;',
+      'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;backdrop-filter:blur(6px);pointer-events:none}',
+      '#__fhcam .cam-toast{position:absolute;left:50%;top:calc(58px + env(safe-area-inset-top,0px));transform:translateX(-50%);',
+      'z-index:32;max-width:82%;padding:8px 13px;border-radius:999px;background:rgba(0,0,0,.66);color:#fff;',
+      'font:12px/1.4 inherit;text-align:center;opacity:0;transition:opacity .2s;pointer-events:none;backdrop-filter:blur(6px)}',
+      '#__fhcam .cam-fail{position:absolute;inset:0;z-index:30;display:none;place-items:center;padding:28px;',
+      'text-align:center;color:#c9c9d2;font:13px/1.9 inherit;white-space:pre-wrap;background:#000}',
+      '@media(max-width:370px){#__fhcam .cam-left{width:92px;left:6px;padding:6px}',
+      '#__fhcam .cam-zoom{right:92px;width:40px}#__fhcam .cam-shot{right:8px;width:66px;height:66px;border-width:4px}',
+      '#__fhcam .cam-chip{height:26px;font-size:10px}}'
+    ].join('');
+    (document.head || document.documentElement).appendChild(st);
+  }
+
   function open(opts) {
     opts = opts || {};
     if (S) close();
@@ -230,69 +297,15 @@
       sending: false
     };
 
-    var root = s.root = el('div', 'position:fixed;inset:0;z-index:2147483647;background:#000;display:flex;flex-direction:column;' +
-      'font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden;touch-action:none');
-    root.setAttribute('data-fh-skip', '1');
+    camCss();
+    var root = s.root = el('div');
     root.id = '__fhcam';
+    root.setAttribute('data-fh-skip', '1');
 
-    // 顶栏：分辨率 / 标题 / 关闭
-    var top = el('div', 'position:relative;z-index:6;display:flex;align-items:center;gap:10px;' +
-      'padding:10px 12px;background:linear-gradient(rgba(0,0,0,.72),transparent);flex-shrink:0');
-    var resSel = document.createElement('select');
-    resSel.title = '拍照/录像分辨率';
-    resSel.style.cssText = 'flex-shrink:0;height:30px;padding:0 6px;border:1px solid rgba(255,255,255,.22);' +
-      'border-radius:8px;background:rgba(0,0,0,.45);color:#e8e8ee;font:12px/1 inherit;outline:none';
-    RES_OPTS.forEach(function (o) {
-      var op = document.createElement('option');
-      op.value = String(o.v);
-      op.textContent = o.l + ' · ' + o.v + 'px';
-      op.style.background = '#111';
-      resSel.append(op);
-    });
-    resSel.value = String(s.res);
-    var tt = el('div', String(opts.title || '相机'),
-      'flex:1;min-width:0;text-align:center;color:#dcdce6;font:13px/1.2 inherit;white-space:nowrap;' +
-      'overflow:hidden;text-overflow:ellipsis;padding:0 4px');
-    var xBtn = el('button', 'width:34px;height:34px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.14);' +
-      'color:#fff;font:17px/1 inherit;cursor:pointer;flex-shrink:0', '✕');
-    xBtn.title = '关闭';
-    top.append(resSel, tt, xBtn);
-
-    // v3.14：拍照 / 录像 明确切换（单快门）
-    var modeBar = null, modeBtns = {};
-    if (s.canBoth) {
-      modeBar = el('div', 'position:relative;z-index:6;display:flex;justify-content:center;gap:6px;' +
-        'padding:0 12px 8px;background:linear-gradient(rgba(0,0,0,.55),transparent);flex-shrink:0');
-      [['photo', '📷 拍照'], ['video', '🎥 录像']].forEach(function (it) {
-        var b = el('button', 'min-width:88px;height:32px;padding:0 14px;border:1px solid rgba(255,255,255,.24);' +
-          'border-radius:999px;background:rgba(0,0,0,.42);color:#cfcfd8;font:12px/1 inherit;cursor:pointer', it[1]);
-        b.setAttribute('data-mode', it[0]);
-        b.onclick = function () { setMode(it[0]); };
-        modeBtns[it[0]] = b;
-        modeBar.appendChild(b);
-      });
-    }
-
-    // v3.17：比例栏（取景框和成片共用同一比例）
-    var ratioBar = el('div', 'position:relative;z-index:6;display:flex;align-items:center;justify-content:center;' +
-      'gap:6px;padding:0 10px 8px;overflow-x:auto;background:linear-gradient(rgba(0,0,0,.55),transparent);' +
-      'flex-shrink:0;-webkit-overflow-scrolling:touch');
-    var ratioBtns = {};
-    RATIO_OPTS.forEach(function (o) {
-      var b = el('button', 'flex:0 0 auto;min-width:50px;height:30px;padding:0 10px;border:1px solid rgba(255,255,255,.24);' +
-        'border-radius:999px;background:rgba(0,0,0,.42);color:#cfcfd8;font:12px/1 inherit;cursor:pointer', o.l);
-      b.setAttribute('data-ratio', o.k);
-      b.onclick = function () { setRatio(o.k); };
-      ratioBtns[o.k] = b;
-      ratioBar.appendChild(b);
-    });
-
-    // v3.17：stageWrap 负责黑边留白，stage 是严格按比例计算的取景框；
-    // 框内才是最终成片范围，变焦只裁框内画面，不再缩放整个页面。
-    var stageWrap = s.stageWrap = el('div', 'position:relative;flex:1;min-height:0;width:100%;overflow:hidden;' +
-      'background:#000;display:flex;align-items:center;justify-content:center');
-    var stage = s.stage = el('div', 'position:relative;flex:0 0 auto;overflow:hidden;background:#000;' +
-      'box-shadow:0 0 0 1px rgba(255,255,255,.18)');
+    // v3.18：取景框吃满整个屏幕，控件全部浮在左右两边；
+    // stage 仍按目标比例居中，中间不放大，只把预览框留给用户。
+    var stageWrap = s.stageWrap = el('div', 'cam-stagewrap');
+    var stage = s.stage = el('div', 'cam-stage');
     var v = s.v = document.createElement('video');
     v.autoplay = true;
     v.muted = true;
@@ -304,26 +317,71 @@
       'max-width:none;max-height:none;pointer-events:none';
     stage.appendChild(v);
 
-    var toastEl = s.toastEl = el('div', 'position:absolute;left:50%;top:64px;transform:translateX(-50%);z-index:8;' +
-      'max-width:82%;padding:8px 13px;border-radius:999px;background:rgba(0,0,0,.66);color:#fff;' +
-      'font:12px/1.4 inherit;text-align:center;opacity:0;transition:opacity .2s;pointer-events:none;backdrop-filter:blur(6px)');
+    var tt = s.titleEl = el('div', 'cam-title', String(opts.title || ''));
+    if (!opts.title) tt.style.display = 'none';
 
-    // 变焦条
-    var zWrap = s.zWrap = el('div', 'position:absolute;left:50%;bottom:116px;transform:translateX(-50%);z-index:6;' +
-      'display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(0,0,0,.5);' +
-      'color:#fff;backdrop-filter:blur(6px);font:12px/1 inherit');
-    var zOut = el('button', 'width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.14);' +
-      'color:#fff;font:17px/1 inherit;cursor:pointer', '−');
-    zOut.title = '缩小';
-    var zRange = el('input', 'width:104px;accent-color:#5b8dfa');
+    // 左栏：比例（2 列 × 3 行）+ 清晰度（2 列 × 2 行）
+    var left = s.leftRail = el('div', 'cam-left');
+    var ratioBtns = {};
+    RATIO_OPTS.forEach(function (o) {
+      var b = el('button', 'cam-chip', o.l);
+      b.setAttribute('data-ratio', o.k);
+      b.onclick = function () { setRatio(o.k); };
+      ratioBtns[o.k] = b;
+    });
+    var ratioGrid = el('div', 'cam-grid');
+    Object.keys(ratioBtns).forEach(function (k) { ratioGrid.append(ratioBtns[k]); });
+    var resBtns = {};
+    RES_OPTS.forEach(function (o) {
+      var b = el('button', 'cam-chip', o.l);
+      b.setAttribute('data-res', String(o.v));
+      b.onclick = function () { setRes(o.v); };
+      resBtns[o.v] = b;
+    });
+    var resGrid = el('div', 'cam-grid');
+    RES_OPTS.forEach(function (o) { resGrid.append(resBtns[o.v]); });
+    left.append(el('div', 'cam-lab', '比例'), ratioGrid, el('div', 'cam-lab', '清晰度'), resGrid);
+
+    // 右栏：竖向变焦胶囊 + 右侧居中的快门
+    var zWrap = s.zWrap = el('div', 'cam-zoom');
+    var zIn = el('button', 'cam-zbtn', '+');
+    zIn.title = '放大';
+    var zSlide = el('div', 'cam-zslide');
+    var zRange = el('input');
     zRange.type = 'range';
     zRange.min = '1'; zRange.max = '4'; zRange.step = '0.1'; zRange.value = '1';
     zRange.title = '变焦';
-    var zLab = el('span', 'min-width:38px;text-align:center;font-variant-numeric:tabular-nums', '1.0×');
-    var zIn = el('button', 'width:28px;height:28px;padding:0;border:0;border-radius:50%;background:rgba(255,255,255,.14);' +
-      'color:#fff;font:17px/1 inherit;cursor:pointer', '+');
-    zIn.title = '放大';
-    zWrap.append(zOut, zRange, zLab, zIn);
+    zSlide.append(zRange);
+    var zLab = el('span', 'cam-zlab', '1.0×');
+    var zOut = el('button', 'cam-zbtn', '−');
+    zOut.title = '缩小';
+    zWrap.append(zIn, zSlide, zLab, zOut);
+
+    var shot = s.shot = el('button', 'cam-shot', '');
+    shot.title = '拍照';
+    shot.setAttribute('aria-label', '拍照');
+    shot.onpointerdown = function () { shot.style.transform = 'translateY(-50%) scale(.92)'; };
+    shot.onpointerup = function () { shot.style.transform = ''; };
+    shot.onpointercancel = function () { shot.style.transform = ''; };
+
+    // 底部：左翻转，中间拍照 / 录像切换
+    var flip = s.flip = el('button', 'cam-flip', '🔄');
+    flip.title = '前后摄像头';
+    var modeBar = null, modeBtns = {};
+    if (s.canBoth) {
+      modeBar = el('div', 'cam-mode');
+      [['photo', '📷 拍照'], ['video', '🎥 录像']].forEach(function (it) {
+        var b = el('button', '', it[1]);
+        b.setAttribute('data-mode', it[0]);
+        b.onclick = function () { setMode(it[0]); };
+        modeBtns[it[0]] = b;
+        modeBar.appendChild(b);
+      });
+    }
+
+    var xBtn = el('button', 'cam-x', '✕');
+    xBtn.title = '关闭';
+    var toastEl = s.toastEl = el('div', 'cam-toast');
 
     // 录像状态：放在取景框顶部，显示已录时长 + 当前体积 + 比例
     var recLabel = s.recLabel = el('div', 'position:absolute;left:50%;top:10px;transform:translateX(-50%);' +
@@ -331,31 +389,11 @@
       'font:11px/1.5 ui-monospace,monospace;display:none;white-space:nowrap;pointer-events:none', '● 00:00 · 0.0 MB');
     stage.appendChild(recLabel);
 
-    // 底栏：左翻转，右侧快门（拍照 / 开始-停止录像）
-    var bar = s.bar = el('div', 'position:relative;z-index:6;display:flex;align-items:center;justify-content:space-between;' +
-      'gap:0;padding:14px 20px calc(22px + env(safe-area-inset-bottom,0px));' +
-      'background:linear-gradient(transparent,rgba(0,0,0,.8));flex-shrink:0');
-    var flip = s.flip = el('button', 'width:52px;height:52px;padding:0;border:1px solid rgba(255,255,255,.26);' +
-      'border-radius:50%;background:rgba(28,28,34,.66);color:#fff;font:20px/1 inherit;cursor:pointer;flex:0 0 auto', '🔄');
-    flip.title = '前后摄像头';
-    var spacer = el('div', 'flex:1;height:52px');
-    var shot = s.shot = el('button', 'width:76px;height:76px;padding:0;border:4px solid rgba(255,255,255,.88);' +
-      'border-radius:50%;background:#fff;color:#111;font:700 14px/1 inherit;cursor:pointer;flex:0 0 auto;' +
-      'box-shadow:0 0 0 4px rgba(0,0,0,.28),0 6px 20px rgba(0,0,0,.5);transition:transform .12s,background .12s', '');
-    shot.title = '拍照';
-    shot.setAttribute('aria-label', '拍照');
-    shot.onpointerdown = function () { shot.style.transform = 'scale(.92)'; };
-    shot.onpointerup = function () { shot.style.transform = ''; };
-    shot.onpointercancel = function () { shot.style.transform = ''; };
+    var failBox = s.failBox = el('div', 'cam-fail');
 
-    bar.append(flip, spacer, shot);
-
-    var failBox = s.failBox = el('div', 'position:absolute;inset:0;z-index:9;display:none;place-items:center;' +
-      'padding:28px;text-align:center;color:#c9c9d2;font:13px/1.9 inherit;white-space:pre-wrap;background:#000');
-
-    root.append(top);
+    root.append(stageWrap, tt, left, zWrap, shot);
     if (modeBar) root.append(modeBar);
-    root.append(ratioBar, stageWrap, toastEl, zWrap, bar, failBox);
+    root.append(flip, xBtn, toastEl, failBox);
     stageWrap.appendChild(stage);
     document.body.append(root);
 
@@ -378,8 +416,9 @@
       s.dead = true;
       stopCanvasRec(s);
       stopStream(s);
-      s.bar.style.display = 'none';
-      s.zWrap.style.display = 'none';
+      [s.leftRail, s.zWrap, s.shot, s.modeBar, s.flip, s.titleEl].forEach(function (n) {
+        if (n) n.style.display = 'none';
+      });
       s.failBox.style.display = 'grid';
       s.failBox.textContent = text;
     }
@@ -472,15 +511,26 @@
 
     function updateRatio() {
       Object.keys(ratioBtns).forEach(function (k) {
-        var on = k === s.ratio;
-        ratioBtns[k].style.background = on ? '#fff' : 'rgba(0,0,0,.42)';
-        ratioBtns[k].style.color = on ? '#111' : '#cfcfd8';
-        ratioBtns[k].style.borderColor = on ? '#fff' : 'rgba(255,255,255,.24)';
+        ratioBtns[k].classList.toggle('on', k === s.ratio);
       });
     }
 
+    function updateRes() {
+      Object.keys(resBtns).forEach(function (k) {
+        resBtns[k].classList.toggle('on', Number(k) === s.res);
+      });
+    }
+
+    // 录像中锁住比例 / 清晰度 / 变焦 / 翻转 / 模式，避免中途更换成片参数。
+    function setLocked(lock) {
+      Object.keys(ratioBtns).forEach(function (k) { ratioBtns[k].disabled = lock; });
+      Object.keys(resBtns).forEach(function (k) { resBtns[k].disabled = lock; });
+      Object.keys(modeBtns).forEach(function (k) { modeBtns[k].disabled = lock; });
+      [zIn, zOut, zRange, flip].forEach(function (n) { if (n) n.disabled = lock; });
+    }
+
     function setRatio(k) {
-      if (s.recorder && s.recorder.state === 'recording') {
+      if (s.recorder) {
         toast(s, '录像中不能切换比例', true);
         return;
       }
@@ -491,6 +541,18 @@
       layoutStage();
       applyZoom(1);
       toast(s, '比例：' + ratioLabel(k));
+    }
+
+    function setRes(v) {
+      if (s.recorder) {
+        toast(s, '录像中不能切换分辨率', true);
+        return;
+      }
+      s.res = parseInt(v, 10) || 1920;
+      writeRes(s.res);
+      updateRes();
+      toast(s, '分辨率：' + resLabel(s.res) + '（' + s.res + 'px）');
+      startStream();
     }
 
     function onResize() {
@@ -507,18 +569,6 @@
     zOut.onclick = function () { applyZoom(s.zoom - 0.2); };
     zIn.onclick = function () { applyZoom(s.zoom + 0.2); };
     zRange.oninput = function () { applyZoom(parseFloat(zRange.value)); };
-
-    resSel.onchange = function () {
-      if (s.recorder && s.recorder.state === 'recording') {
-        resSel.value = String(s.res);
-        toast(s, '录像中不能切换分辨率', true);
-        return;
-      }
-      s.res = parseInt(resSel.value, 10) || 1920;
-      writeRes(s.res);
-      toast(s, '分辨率：' + resLabel(s.res) + '（' + s.res + 'px）');
-      if (!s.recorder) startStream();
-    };
 
     flip.onclick = function () {
       if (s.recorder) { toast(s, '录像中不能切换摄像头', true); return; }
@@ -546,10 +596,7 @@
     function updateMode() {
       if (!modeBar) return;
       Object.keys(modeBtns).forEach(function (k) {
-        var on = k === s.mode;
-        modeBtns[k].style.background = on ? '#fff' : 'rgba(0,0,0,.42)';
-        modeBtns[k].style.color = on ? '#111' : '#cfcfd8';
-        modeBtns[k].style.borderColor = on ? '#fff' : 'rgba(255,255,255,.24)';
+        modeBtns[k].classList.toggle('on', k === s.mode);
       });
     }
 
@@ -715,13 +762,13 @@
 
     // ── 拍照 ──
     shot.onclick = function () {
-      if (s.recorder && s.recorder.state === 'recording') { stopRec(); return; }
+      if (s.recorder) { stopRec(); return; }
       if (s.previewEl) return;
       if (s.mode === 'video') { startRec(); return; }
       if (!s.stream || !v.videoWidth || !v.videoHeight) { toast(s, '相机还没准备好', true); return; }
       if (Date.now() - s.lastPhotoAt < 700) return;
       s.lastPhotoAt = Date.now();
-      shot.style.transform = 'scale(.9)';
+      shot.style.transform = 'translateY(-50%) scale(.9)';
       setTimeout(function () { shot.style.transform = ''; }, 140);
 
       var cr = srcRect();
@@ -745,7 +792,7 @@
 
     // ── 录像 ──
     function startRec() {
-      if (s.recorder && s.recorder.state === 'recording') return;
+      if (s.recorder) return;
       if (!s.stream) { toast(s, '相机还没准备好', true); return; }
       if (typeof MediaRecorder === 'undefined') { toast(s, '这个浏览器不支持录像', true); return; }
       s.chunks = [];
@@ -820,6 +867,7 @@
           s.recorder = null;
           stopCanvasRec(s);
           shot.disabled = false;
+          setLocked(false);
           updateShutter();
           if (s.mic) { try { s.mic.getTracks().forEach(function (t) { t.stop(); }); } catch (e2) {} s.mic = null; }
           toast(s, '录像初始化失败：' + (e && e.message ? e.message : e), true);
@@ -841,6 +889,7 @@
           s.recorder = null;
           stopCanvasRec(s);
           shot.disabled = false;
+          setLocked(false);
           updateShutter();
           recLabel.style.display = 'none';
           if (s.timer) { clearInterval(s.timer); s.timer = 0; }
@@ -870,11 +919,13 @@
           s.recorder = null;
           stopCanvasRec(s);
           shot.disabled = false;
+          setLocked(false);
           updateShutter();
           toast(s, '录像启动失败：' + (e && e.message ? e.message : e), true);
           return;
         }
         shot.disabled = false;
+        setLocked(true);
         updateShutter();
         recLabel.textContent = '● 00:00 · 0.0 MB · ' + ratioLabel(s.ratio);
         recLabel.style.display = 'block';
@@ -894,10 +945,13 @@
     function stopRec() {
       shot.disabled = false;
       shot.style.opacity = '';
-      try { if (s.recorder && s.recorder.state === 'recording') s.recorder.stop(); } catch (e) {}
+      try {
+        if (s.recorder && (s.recorder.state === 'recording' || s.recorder.state === 'paused')) s.recorder.stop();
+      } catch (e) {}
     }
 
     updateRatio();
+    updateRes();
     layoutStage();
     setTimeout(layoutStage, 0);
     startStream();
